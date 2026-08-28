@@ -248,7 +248,13 @@ PENSION_PROXIES = {
     "ILIM INDEXED NORTH AMERICAN EQUITY": "CSPX.AS",   # S&P 500 tracker
     "ILIM PASSIVE GLOBAL EQUITY": "IWDA.AS",
     "DAVY GLOBAL EQUITIES FOUNDATION": "IWDA.AS",
+    "DAVY GLOBAL FUNDAMENTALS EQUITY": "IWDA.AS",
     "DAVY LONG TERM GROWTH": "IWDA.AS",
+    # A multi-asset fund, so a pure equity tracker is the wrong shape. The
+    # 60/40-ish mandate is closer to a global equity/bond blend, and the
+    # aggregate bond line is the honest proxy for the half that is not
+    # equity; using IWDA alone would overstate its volatility.
+    "DAVY MODERATE GROWTH": "AGGH.AS",
 }
 
 
@@ -288,9 +294,16 @@ def wtw_pension_pdf(path: str | Path) -> dict:
     holding_lines = lines[:boundary]
 
     # Holdings: a fund name spread over one or more lines, then value, units,
-    # unit price and a price date.
-    i = 0
-    while i < len(holding_lines) - 4:
+    # unit price and a price date. Scanned by stepping one line at a time and
+    # skipping what a match consumed - advancing by four unconditionally
+    # walked into the middle of the next block and silently dropped a fund.
+    # -3, not -4: the final fund's date is the last line before the
+    # boundary, and the tighter bound excluded the last block entirely.
+    i, consumed = 0, -1
+    while i < len(holding_lines) - 3:
+        if i <= consumed:
+            i += 1
+            continue
         if (holding_lines[i].startswith("€")
                 and re.fullmatch(r"[\d,]+", holding_lines[i + 1] or "")
                 and holding_lines[i + 2].startswith("€")
@@ -305,7 +318,7 @@ def wtw_pension_pdf(path: str | Path) -> dict:
             name = " ".join(w for w in name_parts
                             if w not in ("Date", "Unit Price", "Number", "of Units",
                                          "Current", "Value", "Fund Name")).strip()
-            if name and name not in ("Employee", "Employer"):
+            if name and name not in ("Employee", "Employer") and len(name) > 3:
                 holdings.append({
                     "name": name,
                     "value_eur": money(holding_lines[i]),
@@ -314,6 +327,7 @@ def wtw_pension_pdf(path: str | Path) -> dict:
                     "priced_on": holding_lines[i + 3],
                     "ticker": _pension_proxy(name),
                 })
+            consumed = i + 3
             i += 4
             continue
         i += 1
@@ -344,5 +358,16 @@ def wtw_pension_pdf(path: str | Path) -> dict:
         unique.append(holding)
 
     contributions.sort(key=lambda c: c["date"])
+
+    # Whose statement this is. The scheme covers both of them, and importing
+    # one person's pot over the other's would be silent and expensive.
+    owner = ""
+    for index, line in enumerate(lines):
+        if "Pension Scheme" in line and index:
+            owner = lines[index - 1].strip()
+            break
+
     return {"holdings": unique, "contributions": contributions,
+            "owner": owner, "scheme": next(
+                (l for l in lines if "Pension Scheme" in l), ""),
             "source": Path(path).name}

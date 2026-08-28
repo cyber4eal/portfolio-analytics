@@ -1023,7 +1023,7 @@ const TABS = [
   ["overview", "Overview"], ["holdings", "Holdings"], ["transactions", "Transactions"],
   ["advice", "Advice"], ["compare", "Against the funds"], ["map", "Map & exposure"],
   ["simulate", "Simulate"], ["stress", "Stress"], ["cube", "Risk surfaces"],
-  ["explore", "Explore"], ["pension", "Pension"],
+  ["explore", "Explore"], ["goal", "Mortgage"], ["pension", "Pension"],
 ];
 
 function renderTabs() {
@@ -1048,6 +1048,7 @@ function selectTab(id) {
   if (id === "map") renderMap();
   if (id === "transactions") renderTransactions();
   if (id === "pension") renderPension();
+  if (id === "goal") renderGoal();
   if (id === "cube") renderCube();
   if (id === "explore") renderExplore();
   if (id === "simulate") {
@@ -1549,9 +1550,24 @@ async function renderPension() {
   box.innerHTML = "";
   const health = await checkApi();
 
-  let data = DATA.pension;
+  const pots = DATA.pension || {};
+  const people = Object.keys(pots);
+  if (!PENSION_OWNER || !pots[PENSION_OWNER]) PENSION_OWNER = people[0];
+
+  const picker = document.getElementById("pensionOwner");
+  picker.innerHTML = "";
+  if (people.length > 1) {
+    picker.append(el("label", {}, "Whose pension"));
+    const select = el("select", {}, people.map(p => el("option", { value: p }, p)));
+    select.value = PENSION_OWNER;
+    select.addEventListener("change", e => { PENSION_OWNER = e.target.value; renderPension(); });
+    picker.append(select);
+  }
+
+  let data = pots[PENSION_OWNER] || {};
   if (API) {
-    try { data = await apiGet("/api/pension"); } catch (e) { /* keep the built copy */ }
+    try { data = await apiGet(`/api/pension?owner=${encodeURIComponent(PENSION_OWNER)}`); }
+    catch (e) { /* keep the built copy */ }
   } else {
     box.append(el("div", { class: "warnbox" },
       "The API is not answering, so this is the pot as it stood when the site was last built and nothing can be edited from here."));
@@ -1699,6 +1715,18 @@ async function renderPension() {
       renderPension();
     });
   }
+  const charge = document.getElementById("penCharge");
+  if (!charge.dataset.wired) {
+    charge.dataset.wired = "1";
+    document.getElementById("penChargeSave").addEventListener("click", async () => {
+      await fetch("/api/pension/charge", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ charge: parseFloat(charge.value), owner: PENSION_OWNER }) });
+      renderPension();
+    });
+  }
+  charge.value = ((data.charge ?? 0.015) * 100).toFixed(2);
+
   document.getElementById("penYearsLabel").textContent = years.value;
   renderPensionCharts(data);
 }
@@ -1717,6 +1745,7 @@ async function renderPension() {
    were relying on it. A ridge running across every holding at once is the
    month your diversification stopped working. */
 
+let PENSION_OWNER = null;
 let cubeScene = null;
 let cubeMode = "blend";
 
@@ -1978,7 +2007,8 @@ function pensionProjection(data) {
   const monthly = parseFloat(document.getElementById("penMonthly").value) || 0;
   const start = data.estimatedTotal ?? data.total;
   const beta = data.beta ?? 1.0;
-  const target = capmReturn(beta);
+  // Net of the scheme's annual charge. Over decades this dominates.
+  const target = capmReturn(beta) - (data.charge ?? 0.015);
 
   // Without a proxy series there is nothing to resample, so fall back to a
   // smooth lognormal rather than showing nothing.
@@ -2026,6 +2056,7 @@ function pensionProjection(data) {
 
 function renderPensionCharts(data) {
   const result = pensionProjection(data);
+  const charge = data.charge ?? 0.015;
   const labels = result.fan.map(f => (f.month / 12).toFixed(0) + "y");
   const band = (to, colour) => ({
     label: "", data: result.fan.map(f => f[to]), fill: { target: "-1" },
@@ -2068,7 +2099,13 @@ function renderPensionCharts(data) {
     `<strong>${fmtEur(result.paidIn)}</strong> and the median outcome is <strong>${fmtEur(result.median)}</strong> ` +
     `(bad case ${fmtEur(result.p05)}, good case ${fmtEur(result.p95)}).<br><br>` +
     `Drift is an assumption — ${(RISK_FREE * 100).toFixed(1)}% cash plus beta ${fmtNum(result.beta)} × ${(EQUITY_RISK_PREMIUM * 100).toFixed(1)}% ` +
-    `= ${fmtPct(result.target * 100)} a year, before scheme charges, which this does not model. ` +
+    `less the ${fmtPct(charge * 100)} annual charge, so ${fmtPct(result.target * 100)} a year net. ` +
+    (data.chargeCost ? `<strong>That charge is the single biggest number on this page: over ` +
+      `${data.chargeCost.over} years it costs about ${fmtEur(data.chargeCost.median)}, or ` +
+      `${data.chargeCost.pct}% of what the pot would otherwise be.</strong> ` +
+      `${fmtPct(charge * 100)} is ILIM's published <em>standard</em> rate — an occupational scheme almost ` +
+      `always negotiates below retail, so treat it as an upper bound and put your real figure in the box ` +
+      `above once you have it from the scheme booklet. ` : "") +
     `Contributions are assumed flat in cash terms, so anything tied to a rising salary is understated ` +
     `while the effect of inflation on the end figure is not shown at all: ${fmtEur(result.median)} in ` +
     `${result.years} years is worth far less than ${fmtEur(result.median)} today.`;
@@ -2447,4 +2484,69 @@ function renderPlan() {
   parts.push(`Tax is estimated on average cost. Irish CGT is FIFO with a four-week rule on losses, so the ` +
     `real figure will differ — treat it as the order of magnitude, not the return.`);
   taxBox.innerHTML = parts.join("<br><br>");
+}
+
+/* ---------------- mortgage deposit ---------------- */
+
+function renderGoal() {
+  const goal = DATA.goal || {};
+  const box = document.getElementById("goalBox");
+  box.innerHTML = "";
+  if (!goal.target) {
+    box.append(el("p", { class: "muted" },
+      "No Goal_Mortgage tab found in the analytics sheet."));
+    return;
+  }
+
+  const cards = el("div", { class: "kpis" });
+  for (const [k, v, s] of [
+    ["Saved", fmtEur(goal.held), `${goal.pct}% of ${fmtEur(goal.target)}`],
+    ["Still to find", fmtEur(goal.gap),
+     goal.monthsRemaining !== null ? `over ${goal.monthsRemaining} months` : ""],
+    ["Needed each month", goal.requiredMonthly === null ? "–" : fmtEur(goal.requiredMonthly),
+     `you plan ${fmtEur(goal.monthlyContribution)}`],
+    ["Target date", (goal.targetDate || "").slice(0, 10),
+     goal.onTrack ? "on track" : "behind"],
+  ]) {
+    cards.append(el("div", { class: "kpi" }, el("div", { class: "k" }, k),
+      el("div", { class: "v" }, v), el("div", { class: "s" }, s)));
+  }
+  box.append(cards);
+
+  // Progress bar - the one chart this deserves.
+  const pct = Math.min(100, goal.pct);
+  const bar = el("div", { style: "margin:20px 0 6px;height:26px;background:var(--mist);border:1px solid var(--line);position:relative" },
+    el("div", { style: `height:100%;width:${pct}%;background:${goal.onTrack ? "var(--accent)" : "#B07C1F"}` }),
+    el("div", { style: "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600" },
+      `${fmtEur(goal.held)} of ${fmtEur(goal.target)}`));
+  box.append(bar);
+
+  const panel = el("div", { class: "panel wide", style: "margin-top:20px" },
+    el("h3", {}, "Where the deposit is"));
+  const body = el("div", { class: "body" });
+  body.append(table(["Book", "Account", "Amount"],
+    goal.lines.map(l => ({ cells: [l.book, l.name, fmtEur(l.value)] })), { numFrom: 2 }));
+  panel.append(body);
+  box.append(panel);
+
+  const notes = [];
+  if (Math.abs(goal.countedElsewhere) > 1) {
+    notes.push(`<strong>The sheet's own tracker counts ${fmtEur(goal.sheetHeld)}, not ${fmtEur(goal.held)}.</strong> ` +
+      `It looks at one book; ${fmtEur(goal.countedElsewhere)} of deposit money sits in the other. That is the ` +
+      `difference between ${goal.pct}% of the target and ${(100 * goal.sheetHeld / goal.target).toFixed(1)}%, ` +
+      `and between being on track and a reported shortfall. Worth reconciling — if that money is earmarked ` +
+      `for something else, this page is the one that is wrong.`);
+  }
+  notes.push(goal.onTrack
+    ? `At ${fmtEur(goal.monthlyContribution)} a month you reach ${fmtEur(goal.target)} with room to spare — ` +
+      `${fmtEur(goal.requiredMonthly)} a month is what the remaining gap actually requires.`
+    : `${fmtEur(goal.requiredMonthly)} a month is required and ${fmtEur(goal.monthlyContribution)} is planned, ` +
+      `a shortfall of ${fmtEur(goal.shortfallMonthly)} a month. Either the date moves, the target moves, or ` +
+      `the monthly amount does.`);
+  notes.push(`This money is deliberately excluded from every portfolio weight, risk figure and rebalance ` +
+    `suggestion on the rest of the site. A deposit needed in ${goal.monthsRemaining} months has no business ` +
+    `in equities: the horizon is far too short for volatility to average out, and the cost of being down ` +
+    `20% on the day you need it is not a paper loss, it is not buying the house.`);
+  box.append(el("div", { class: "warnbox", style: "margin-top:18px" },
+    (() => { const d = el("div"); d.innerHTML = notes.join("<br><br>"); return d; })()));
 }

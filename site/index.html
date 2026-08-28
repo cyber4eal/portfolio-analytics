@@ -417,7 +417,16 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
     </div>
   </section>
 
+  <section class="view" id="view-goal">
+    <div class="section-head">
+      <h2>Mortgage deposit</h2>
+      <p>Money with a deadline is a different kind of money. Its job is to be intact and available on the date, not to compound — so it sits outside the investable book, out of every weight and risk figure, and nothing here will ever suggest investing it.</p>
+    </div>
+    <div id="goalBox"></div>
+  </section>
+
   <section class="view" id="view-pension">
+    <div class="controls" id="pensionOwner"></div>
     <div class="section-head">
       <h2>Pension</h2>
       <p>Kept apart from the tradable books on purpose. The money is not accessible, most scheme funds have no market ticker, and folding the pot into your weights would inflate every cap and budget that depends on the tradable total. It still counts towards what you have.</p>
@@ -433,6 +442,9 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
           <span class="muted">€</span><input type="number" id="penMonthly" step="25" min="0" style="width:100px">
           <button class="btn ghost" id="penRateSave">save as my new rate</button>
           <button class="btn ghost" id="penRateAuto">back to the average</button>
+          <label for="penCharge">Annual charge</label>
+          <input type="number" id="penCharge" step="0.05" min="0" max="5" style="width:80px"> %
+          <button class="btn ghost" id="penChargeSave">save</button>
         </div>
         <div class="body"><div class="chartbox tall"><canvas id="chartPension"></canvas></div></div>
         <div class="warnbox" id="penWarning"></div>

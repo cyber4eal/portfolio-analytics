@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import advice, combo, ledger, optimise, pension, portfolio as book, prices, profile, scenarios, universe
+from . import advice, combo, goals, ledger, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -44,17 +44,19 @@ def build(agent_dir: str, allocation: float = 0.10,
         print("Reading the live book...")
         all_holdings = book.read_holdings(agent_dir)
 
-    # The pension is its own book: never merged into Combined, because the
-    # money is not accessible and folding it into tradable weights would
-    # inflate every budget and cap that depends on them.
-    pension_rows = pension.as_holdings()
-    if pension_rows:
-        all_holdings = all_holdings + pension_rows
+    # The pension is deliberately NOT a book in the switcher. It has its own
+    # tab with its own projection, and listing it beside the tradable books
+    # invited exactly the confusion it caused: the switcher's other entries
+    # are books you can trade, and this is money you cannot touch for
+    # decades. Its price history is still needed, so its proxy tickers are
+    # collected for the download.
+    pension_pots = pension.all_owners()
+    pension_tickers_needed = sorted({
+        h.get("ticker") for pot in pension_pots.values()
+        for h in pot.get("holdings", []) if h.get("ticker")})
 
-    names = [n for n in book.books(all_holdings) if n != pension.BOOK]
+    names = book.books(all_holdings)
     views = names + ([book.COMBINED] if len(names) > 1 else [])
-    if pension_rows:
-        views.append(pension.BOOK)
     print(f"  {len(all_holdings)} rows across {len(names)} book(s): {', '.join(names)}")
 
     # The default view is whichever book the agent is scoped to.
@@ -71,7 +73,8 @@ def build(agent_dir: str, allocation: float = 0.10,
     # Every book's tickers, not just the active one: the per-book views and
     # the pension all need price history, and a ticker missing from the
     # matrix drops that whole view rather than just that row.
-    holding_tickers = sorted({h.ticker for h in all_holdings if h.tradable})
+    holding_tickers = sorted({h.ticker for h in all_holdings if h.tradable}
+                             | set(pension_tickers_needed))
     fund_tickers = universe.tickers()
     closes = prices.download_closes(
         sorted(set(holding_tickers + fund_tickers + [universe.BENCHMARK_TICKER]))
@@ -121,11 +124,27 @@ def build(agent_dir: str, allocation: float = 0.10,
     exposure = profile.exposures(holding_dicts, profiles)
     income = profile.income(holding_dicts, profiles)
 
-    print("Projecting the pension...")
+    print("Projecting the pensions...")
     all_trades = ledger.read_all()
+
+    for owner, pot in pension_pots.items():
+        _project_pension(pot, closes, benchmark)
+    print(f"  {len(pension_pots)} pot(s): " + ", ".join(
+        f"{o} EUR {p['total']:,.0f}" for o, p in pension_pots.items()))
+
+    print("Tracking the mortgage goal...")
+    try:
+        goal = goals.track(goals.read_goal(agent_dir), all_holdings)
+        if goal:
+            print(f"  EUR {goal['held']:,.0f} of EUR {goal['target']:,.0f} "
+                  f"({goal['pct']}%), {goal['monthsRemaining']} months left")
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  goal unavailable ({type(exc).__name__})")
+        goal = {}
+
     pension_payload = pension.accrue(pension.summary())
     monthly_contribution = pension.recent_monthly(pension_payload)
-    if pension_payload["total"] > 0:
+    if False:
         # Several scheme funds share one proxy - two of these three are
         # global equity trackers - so values are summed per ticker before
         # weighting. Keeping one column per holding put a duplicate column
@@ -304,7 +323,9 @@ def build(agent_dir: str, allocation: float = 0.10,
         "sheetReadAt": dt.datetime.now().isoformat(timespec="seconds"),
         "ledgerTrades": len(all_trades),
         "lastTrade": max((t["date"] for t in all_trades), default=None),
-        "pensionStatement": pension_payload.get("lastStatement"),
+        "pensionStatement": next(
+            (p.get("lastStatement") for p in pension_pots.values()
+             if p.get("lastStatement")), None),
     }
 
     return {
@@ -330,7 +351,8 @@ def build(agent_dir: str, allocation: float = 0.10,
         "buyCandidates": advice.buy_candidates(
             additions, [f.as_dict() for f in universe.UNIVERSE], exposure, allocation),
         "ledger": ledger.summary(ledger.read_all()),
-        "pension": pension_payload,
+        "pension": pension_pots,
+        "goal": goal,
         "exposure": exposure,
         "income": income,
         "stress": stress,
@@ -415,3 +437,61 @@ def read_snapshot(path: Path) -> list:
             )
             for row in csv.DictReader(handle)
         ]
+
+
+def _project_pension(pot: dict, closes, benchmark) -> None:
+    """Attach a projection to one pot, in place.
+
+    Scheme funds are unlisted, so several map to the same listed proxy and
+    values have to be summed per ticker before weighting - one column per
+    holding put a duplicate in the price matrix and broke the weighting.
+    """
+    if pot.get("total", 0) <= 0:
+        return
+    values: dict = {}
+    for holding in pot.get("holdings", []):
+        ticker = holding.get("ticker")
+        amount = float(holding.get("value_eur") or 0)
+        if not ticker or ticker not in closes.columns or amount <= 0:
+            continue
+        values[ticker] = values.get(ticker, 0.0) + amount
+    if not values:
+        return
+
+    tickers = sorted(values)
+    weights = pd.Series({t: values[t] for t in tickers}, dtype=float)
+    weights = weights / weights.sum()
+    series = combo.portfolio_returns(prices.to_returns(closes[tickers]), weights)
+
+    joined = pd.concat([series, benchmark], axis=1, join="inner").dropna()
+    beta = float(joined.cov().iloc[0, 1] / benchmark.var()) if len(joined) > 20 else 1.0
+
+    monthly = pension.recent_monthly(pot)
+    charge = pot.get("charge", pension.DEFAULT_CHARGE)
+    start = pot.get("estimatedTotal") or pot["total"]
+
+    pot["beta"] = round(beta, 2)
+    pot["monthlyContribution"] = monthly
+    # Net of the scheme charge. Over thirty-five years this is not a detail:
+    # a projection that assumes zero is not conservative, it is wrong.
+    pot["projection"] = scenarios.monte_carlo_with_contributions(
+        series, start, monthly_contribution=monthly, years=35,
+        target_return=combo.expected_return(beta) - charge)
+    # And what the charge itself costs, by running the same paths without it.
+    gross = scenarios.monte_carlo_with_contributions(
+        series, start, monthly_contribution=monthly, years=35,
+        target_return=combo.expected_return(beta))
+    pot["projectionGross"] = gross
+    if gross and pot["projection"]:
+        cost = gross["final"]["median"] - pot["projection"]["final"]["median"]
+        pot["chargeCost"] = {
+            "over": 35,
+            "rate": round(charge, 4),
+            "median": round(cost, 2),
+            "pct": round(100 * cost / gross["final"]["median"], 1)
+            if gross["final"]["median"] else 0.0,
+        }
+    pot["proxyNote"] = (
+        "Scheme funds are unlisted, so returns are proxied by listed trackers "
+        "with the same mandate: " + ", ".join(tickers) + ". The pot value is "
+        "the statement's; only the shape of the simulation comes from the proxy.")

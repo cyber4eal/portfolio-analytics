@@ -226,7 +226,9 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._send(400, {"error": "ticker is required"})
                 return self._send(200, _quote(ticker))
             if route.path == "/api/pension":
-                return self._send(200, pension.accrue(pension.summary()))
+                owner = (query.get("owner") or [None])[0]
+                return self._send(200, pension.accrue(
+                    pension.summary(owner=owner)))
             if route.path == "/api/transactions":
                 trades = ledger.read_all()
                 if portfolio and portfolio != "Combined":
@@ -252,18 +254,28 @@ class Handler(SimpleHTTPRequestHandler):
             if route.path == "/api/transactions":
                 return self._record(body)
             if route.path == "/api/pension/holdings":
-                pension.set_holdings(body.get("holdings") or [])
+                pension.set_holdings(body.get("holdings") or [], owner=body.get("owner"))
                 request_rebuild()
                 return self._send(200, pension.accrue(pension.summary()))
             if route.path == "/api/pension/contribution":
-                pension.add_contribution(body)
-                return self._send(201, pension.accrue(pension.summary()))
+                pension.add_contribution(body, owner=body.get("owner"))
+                return self._send(201, pension.accrue(
+                    pension.summary(owner=body.get("owner"))))
+            if route.path == "/api/pension/charge":
+                raw = body.get("charge")
+                pension.set_charge_override(
+                    None if raw in (None, "", "auto") else float(raw) / 100,
+                    owner=body.get("owner"))
+                request_rebuild()
+                return self._send(200, pension.accrue(
+                    pension.summary(owner=body.get("owner"))))
             if route.path == "/api/pension/rate":
                 # A pay rise makes the trailing average the wrong thing to
                 # project forward; this pins what to use instead.
                 raw = body.get("monthly")
                 pension.set_contribution_override(
-                    None if raw in (None, "", "auto") else float(raw))
+                    None if raw in (None, "", "auto") else float(raw),
+                    owner=body.get("owner"))
                 return self._send(200, pension.accrue(pension.summary()))
             if route.path == "/api/rebuild":
                 return self._send(202, {"rebuild": request_rebuild(force=True)})

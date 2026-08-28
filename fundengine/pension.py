@@ -24,6 +24,45 @@ from pathlib import Path
 STORE = Path(__file__).resolve().parent.parent / "data" / "pension.json"
 BOOK = "Pension"
 
+#: Published standard annual management charges for the scheme's funds.
+#:
+#: ILIM's own factsheet for the Indexed North American Equity Fund states:
+#: "Fund returns are quoted before taxes and after a standard annual
+#: management charge of 1.50%. The fund management charge and product
+#: charges will vary depending on the terms and conditions of your
+#: contract." An occupational scheme almost always negotiates below the
+#: retail rate, so this is an upper bound and not a measurement - the real
+#: figure is in the scheme booklet.
+#:
+#: It is modelled at all because leaving it out is the worse error. Over
+#: thirty-five years a charge of this size is the difference between one
+#: retirement and a materially poorer one, and a projection that silently
+#: assumes zero is not conservative, it is wrong.
+STANDARD_CHARGES = {
+    "ILIM INDEXED NORTH AMERICAN EQUITY": 0.0150,
+    "ILIM PASSIVE GLOBAL EQUITY": 0.0150,
+    "DAVY GLOBAL EQUITIES FOUNDATION": 0.0150,
+    "DAVY GLOBAL FUNDAMENTALS EQUITY": 0.0150,
+    "DAVY LONG TERM GROWTH": 0.0150,
+    "DAVY MODERATE GROWTH": 0.0150,
+}
+DEFAULT_CHARGE = 0.0150
+
+
+def charge_for(name: str) -> float:
+    key = (name or "").upper()
+    for fragment, rate in STANDARD_CHARGES.items():
+        if fragment in key:
+            return rate
+    return DEFAULT_CHARGE
+
+
+def blended_charge(holdings: list) -> float:
+    """Value-weighted charge across the pot."""
+    total = sum(float(h.get("value_eur") or 0) for h in holdings) or 1.0
+    return sum(float(h.get("value_eur") or 0) * charge_for(h.get("name", ""))
+               for h in holdings) / total
+
 
 @dataclass
 class PensionHolding:
@@ -55,30 +94,57 @@ class Pension:
     contributions: list = field(default_factory=list)
     updated: str = ""
     contribution_override: float | None = None
+    charge_override: float | None = None
 
     def as_dict(self) -> dict:
         return {"holdings": self.holdings, "contributions": self.contributions,
                 "updated": self.updated,
-                "contribution_override": self.contribution_override}
+                "contribution_override": self.contribution_override,
+                "charge_override": self.charge_override}
 
 
-def load(path: Path = STORE) -> Pension:
+#: The scheme covers both of them, so a pot has an owner. Files written
+#: before that was true are migrated on read into the first owner's slot.
+DEFAULT_OWNER = "Catalin"
+
+
+def _read_blob(path: Path) -> dict:
     if not Path(path).exists():
-        return Pension()
+        return {"pensions": {}}
     try:
         blob = json.loads(Path(path).read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return Pension()
-    return Pension(holdings=blob.get("holdings", []),
-                   contributions=blob.get("contributions", []),
-                   updated=blob.get("updated", ""),
-                   contribution_override=blob.get("contribution_override"))
+        return {"pensions": {}}
+    if "pensions" in blob:
+        return blob
+    # Old flat shape: one unnamed pot.
+    if blob.get("holdings") or blob.get("contributions"):
+        return {"pensions": {DEFAULT_OWNER: blob}}
+    return {"pensions": {}}
 
 
-def save(pension: Pension, path: Path = STORE) -> Pension:
+def owners(path: Path = STORE) -> list:
+    return sorted(_read_blob(path).get("pensions", {}))
+
+
+def load(owner: str | None = None, path: Path = STORE) -> Pension:
+    blob = _read_blob(path).get("pensions", {})
+    owner = owner or (sorted(blob)[0] if blob else DEFAULT_OWNER)
+    one = blob.get(owner, {})
+    return Pension(holdings=one.get("holdings", []),
+                   contributions=one.get("contributions", []),
+                   updated=one.get("updated", ""),
+                   contribution_override=one.get("contribution_override"),
+                   charge_override=one.get("charge_override"))
+
+
+def save(pension: Pension, owner: str | None = None, path: Path = STORE) -> Pension:
     pension.updated = datetime.now().isoformat(timespec="seconds")
+    blob = _read_blob(path)
+    owner = owner or (sorted(blob["pensions"])[0] if blob["pensions"] else DEFAULT_OWNER)
+    blob["pensions"][owner] = pension.as_dict()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(pension.as_dict(), indent=1), encoding="utf-8")
+    Path(path).write_text(json.dumps(blob, indent=1), encoding="utf-8")
     return pension
 
 
@@ -101,19 +167,21 @@ def _validate_holding(row: dict) -> dict:
     ).as_dict()
 
 
-def set_holdings(rows: list[dict], path: Path = STORE) -> Pension:
+def set_holdings(rows: list[dict], path: Path = STORE,
+                 owner: str | None = None) -> Pension:
     """Replace the holdings wholesale.
 
     A pension statement arrives as a whole picture rather than a stream of
     trades, so this overwrites rather than appending. Contributions are the
     append-only half.
     """
-    pension = load(path)
+    pension = load(owner, path)
     pension.holdings = [_validate_holding(r) for r in rows]
-    return save(pension, path)
+    return save(pension, owner, path)
 
 
-def add_contribution(row: dict, path: Path = STORE) -> Pension:
+def add_contribution(row: dict, path: Path = STORE,
+                     owner: str | None = None) -> Pension:
     try:
         amount = float(row.get("amount_eur") or 0)
     except (TypeError, ValueError) as exc:
@@ -129,16 +197,17 @@ def add_contribution(row: dict, path: Path = STORE) -> Pension:
     if source not in ("employee", "employer", "avc", "transfer"):
         raise ValueError("source must be employee, employer, avc or transfer")
 
-    pension = load(path)
+    pension = load(owner, path)
     pension.contributions.append(
         Contribution(date=when, amount_eur=round(amount, 2), source=source,
                      note=str(row.get("note", "")).strip()).as_dict())
     pension.contributions.sort(key=lambda c: c["date"])
-    return save(pension, path)
+    return save(pension, owner, path)
 
 
-def summary(pension: Pension | None = None, path: Path = STORE) -> dict:
-    pension = pension or load(path)
+def summary(pension: Pension | None = None, path: Path = STORE,
+            owner: str | None = None) -> dict:
+    pension = pension or load(owner, path)
     total = sum(float(h.get("value_eur") or 0) for h in pension.holdings)
     paid_in = sum(float(c.get("amount_eur") or 0) for c in pension.contributions)
     by_source: dict[str, float] = {}
@@ -156,18 +225,24 @@ def summary(pension: Pension | None = None, path: Path = STORE) -> dict:
         "holdings": pension.holdings,
         "contributions": pension.contributions,
         "contributionOverride": pension.contribution_override,
+        "chargeOverride": pension.charge_override,
+        "charge": (pension.charge_override
+                   if pension.charge_override is not None
+                   else blended_charge(pension.holdings)),
+        "owner": owner or "",
         "pricedCount": len(priced),
         "unpricedCount": len(pension.holdings) - len(priced),
         "updated": pension.updated,
     }
 
 
-def as_holdings(pension: Pension | None = None, path: Path = STORE) -> list:
+def as_holdings(pension: Pension | None = None, path: Path = STORE,
+                owner: str | None = None) -> list:
     """Pension lines shaped like book holdings, so the rest of the engine
     can treat the pot as one more book without special cases."""
     from .portfolio import Holding, currency_for
 
-    pension = pension or load(path)
+    pension = pension or load(owner, path)
     out = []
     for row in pension.holdings:
         ticker = (row.get("ticker") or "").strip().upper()
@@ -184,14 +259,15 @@ def as_holdings(pension: Pension | None = None, path: Path = STORE) -> list:
     return out
 
 
-def set_contribution_override(amount: float | None, path: Path = STORE) -> Pension:
+def set_contribution_override(amount: float | None, path: Path = STORE,
+                              owner: str | None = None) -> Pension:
     """Pin the monthly contribution rate, or clear it to go back to the average.
 
     Contributions track salary, so a raise or a change in employer rate makes
     the trailing average wrong for everything ahead of it. The override says
     what to project with from here; the history keeps what actually happened.
     """
-    pension = load(path)
+    pension = load(owner, path)
     if amount is None:
         pension.contribution_override = None
     else:
@@ -199,7 +275,7 @@ def set_contribution_override(amount: float | None, path: Path = STORE) -> Pensi
         if amount < 0:
             raise ValueError("a contribution rate cannot be negative")
         pension.contribution_override = round(amount, 2)
-    return save(pension, path)
+    return save(pension, owner, path)
 
 
 def recent_monthly(summary_: dict, months: int = 6) -> float:
@@ -267,3 +343,27 @@ def accrue(summary_: dict, as_of: date | None = None) -> dict:
             f"Import the next WTW statement to replace the estimate."
         ) if months else "",
     }
+
+
+def all_owners(path: Path = STORE) -> dict:
+    """Every pot, keyed by owner, each with its accrual applied."""
+    return {name: accrue(summary(path=path, owner=name), )
+            for name in owners(path)}
+
+
+def set_charge_override(rate: float | None, path: Path = STORE,
+                        owner: str | None = None) -> Pension:
+    """Pin the scheme's actual annual charge.
+
+    The published rate is retail; a scheme negotiates its own. Once you have
+    the real number from the scheme booklet, this replaces the assumption.
+    """
+    pension = load(owner, path)
+    if rate is None:
+        pension.charge_override = None
+    else:
+        rate = float(rate)
+        if not 0 <= rate < 0.1:
+            raise ValueError("a charge should be a fraction, e.g. 0.0075 for 0.75%")
+        pension.charge_override = rate
+    return save(pension, owner, path)

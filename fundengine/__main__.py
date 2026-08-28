@@ -113,42 +113,57 @@ def _import_pension(args) -> int:
         print("nothing to import - pass --file")
         return 1
 
-    holdings, contributions = [], []
+    # Statements are routed by the name printed on them. The scheme covers
+    # both of them and importing one pot over the other would be silent.
+    by_owner: dict = {}
     for path in args.file:
         parsed = importers.wtw_pension_pdf(path)
-        holdings.extend(parsed["holdings"])
-        contributions.extend(parsed["contributions"])
-        print(f"{parsed['source']}: {len(parsed['holdings'])} fund(s), "
+        owner = (parsed.get("owner") or "").split()[0] or args.portfolio
+        slot = by_owner.setdefault(owner, {"holdings": [], "contributions": []})
+        for holding in parsed["holdings"]:
+            if not any(h["name"] == holding["name"] for h in slot["holdings"]):
+                slot["holdings"].append(holding)
+        for row in parsed["contributions"]:
+            key = (row["date"], row["source"], row["amount_eur"])
+            if not any((c["date"], c["source"], c["amount_eur"]) == key
+                       for c in slot["contributions"]):
+                slot["contributions"].append(row)
+        print(f"{parsed['source']}: {parsed.get('owner') or 'unknown owner'} — "
+              f"{len(parsed['holdings'])} fund(s), "
               f"{len(parsed['contributions'])} contribution(s)")
 
-    pot = sum(h["value_eur"] for h in holdings)
-    paid = sum(c["amount_eur"] for c in contributions)
-    print(f"  pot EUR {pot:,.0f}, contributions EUR {paid:,.0f}, "
-          f"difference EUR {pot - paid:,.0f}")
-    for h in holdings:
-        print(f"    {h['name'][:44]:44} EUR {h['value_eur']:>8,.0f}"
-              f"  proxy {h['ticker'] or '-'}")
+    for owner, slot in by_owner.items():
+        holdings, contributions = slot["holdings"], slot["contributions"]
+
+        pot = sum(h["value_eur"] for h in holdings)
+        paid = sum(c["amount_eur"] for c in contributions)
+        print(f"\n{owner}: pot EUR {pot:,.0f}, contributions EUR {paid:,.0f}")
+        for h in holdings:
+            print(f"    {h['name'][:44]:44} EUR {h['value_eur']:>8,.0f}"
+                  f"  proxy {h['ticker'] or '-'}")
+
+        if not args.apply:
+            continue
+
+        pension.set_holdings([{
+            "name": h["name"], "value_eur": h["value_eur"], "units": h["units"],
+            "ticker": h["ticker"], "provider": "WTW / J&E Davy scheme",
+            "note": (f"unit price EUR {h['unit_price']:g} at {h['priced_on']}"
+                     + (f"; returns proxied by {h['ticker']}" if h["ticker"] else "")),
+        } for h in holdings], owner=owner)
+
+        known = {(c["date"], c["source"], c["amount_eur"])
+                 for c in pension.load(owner).contributions}
+        added = 0
+        for c in contributions:
+            if (c["date"], c["source"], c["amount_eur"]) in known:
+                continue
+            pension.add_contribution(c, owner=owner)
+            added += 1
+        print(f"    wrote {len(holdings)} holding(s) and {added} contribution(s)")
 
     if not args.apply:
         print("\ndry run - nothing written. Re-run with --apply to commit.")
-        return 0
-
-    pension.set_holdings([{
-        "name": h["name"], "value_eur": h["value_eur"], "units": h["units"],
-        "ticker": h["ticker"], "provider": "WTW / J&E Davy scheme",
-        "note": (f"unit price EUR {h['unit_price']:g} at {h['priced_on']}"
-                 + (f"; returns proxied by {h['ticker']}" if h["ticker"] else "")),
-    } for h in holdings])
-
-    known = {(c["date"], c["source"], c["amount_eur"])
-             for c in pension.load().contributions}
-    added = 0
-    for c in contributions:
-        if (c["date"], c["source"], c["amount_eur"]) in known:
-            continue
-        pension.add_contribution(c)
-        added += 1
-    print(f"\nwrote {len(holdings)} holding(s) and {added} contribution(s)")
     return 0
 
 
