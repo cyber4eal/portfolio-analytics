@@ -9,6 +9,7 @@
 <script src="vendor/chartjs-plugin-datalabels.min.js"></script>
 <script src="vendor/topojson.min.js"></script>
 <script src="cube.js"></script>
+<script src="celebrate.js"></script>
 <style>
 :root{
   --ink:#1C1C1E; --slate:#5B5B62; --paper:#FFFFFF; --mist:#F6F5F3;
@@ -160,6 +161,43 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
   .logo-box{width:58px;height:58px;font-size:18px}
   .chartbox{height:240px}
 }
+
+/* ---- milestones and their fireworks ---- */
+.fireworks{position:fixed;inset:0;pointer-events:none;z-index:400}
+.toasts{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:410;
+  display:flex;flex-direction:column;gap:10px;width:min(430px,calc(100vw - 28px))}
+.toast{display:flex;gap:13px;align-items:flex-start;background:var(--paper);
+  border:1px solid var(--accent);border-left:4px solid var(--accent);
+  padding:13px 14px;box-shadow:0 12px 34px rgba(0,0,0,.18);
+  animation:toastIn .34s cubic-bezier(.2,.9,.3,1.2) both}
+.toast.grand{border-color:var(--green);border-left-color:var(--green)}
+.toast.out{animation:toastOut .3s ease-in forwards}
+.toast .mark{font-size:20px;line-height:1.1;color:var(--accent)}
+.toast.grand .mark{color:var(--green)}
+.toast .body{flex:1;min-width:0}
+.toast .kicker{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--slate)}
+.toast .headline{font-size:19px;font-weight:600;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;margin:2px 0 3px}
+.toast .detail{font-size:12.5px;color:var(--slate);line-height:1.45}
+.toast .close{background:none;border:0;color:var(--slate);font-size:19px;line-height:1;padding:0 2px}
+@keyframes toastIn{from{opacity:0;transform:translateY(-14px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes toastOut{to{opacity:0;transform:translateY(-10px)}}
+
+.mstone-next{background:var(--mist);border:1px solid var(--line);padding:14px 16px;margin-bottom:14px}
+.mstone-next .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+  font-size:13px;margin-bottom:9px}
+.mstone-next .top strong{font-size:15px;font-variant-numeric:tabular-nums}
+.mstone-bar{height:8px;background:var(--line);overflow:hidden}
+.mstone-bar i{display:block;height:100%;background:var(--accent)}
+.mstone-list{display:flex;flex-wrap:wrap;gap:8px}
+.mstone{display:flex;align-items:center;gap:8px;border:1px solid var(--line);
+  background:var(--paper);padding:7px 11px;font-size:12.5px}
+.mstone b{font-weight:600;font-variant-numeric:tabular-nums}
+.mstone span{color:var(--slate)}
+.mstone.new{border-color:var(--accent);background:var(--shade)}
+@media (prefers-reduced-motion:reduce){
+  .toast,.toast.out{animation:none}
+}
 </style>
 </head>
 <body>
@@ -196,6 +234,16 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <p>Every number recomputes from daily returns the moment you change a holding. Volatility is EWMA-weighted, so a change in regime shows up in weeks rather than being diluted across the whole history.</p>
     </div>
     <div class="kpis" id="kpis"></div>
+    <div class="panels">
+      <div class="panel wide" id="milestonePanel">
+        <h3>Milestones</h3>
+        <div class="body">
+          <p class="hint">Banked in this browser, once each. A milestone is never taken back &mdash; a book that dips under a number it crossed still crossed it &mdash; and edits to holdings are ignored here, because a figure typed in to see what would happen is not a thing you achieved.</p>
+          <div id="achievementBox"></div>
+        </div>
+        <p class="note" id="achievementNote"></p>
+      </div>
+    </div>
     <div class="panels">
       <div class="panel wide">
         <h3>Growth of €100</h3>

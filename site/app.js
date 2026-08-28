@@ -1089,6 +1089,7 @@ function renderDerived() {
   renderDeadlines();
   renderLevers();
   renderMilestones();
+  renderAchievements(value);
   renderTheories();
   renderPlan();
   renderHedges();
@@ -1590,6 +1591,10 @@ async function renderPension() {
     box.append(el("div", { class: "warnbox" },
       "The API is not answering, so this is the pot as it stood when the site was last built and nothing can be edited from here."));
   }
+
+  // Per person only: a combined pot would bank a milestone neither of them
+  // reached on their own, and it could never be attributed later.
+  if (BOOK !== "Combined") bankPension(PENSION_OWNER, data.total);
 
   if (data.accrualNote) box.append(el("div", { class: "warnbox" }, data.accrualNote));
   // A WTW statement exports one fund at a time, so the log can explain
@@ -2817,6 +2822,149 @@ function renderMilestones() {
     `to what the best investors alive have actually sustained. At a defensible 8% this book reaches ` +
     `<strong>${fmtEur(reference.atEightPercent)}</strong> in ten years — and the honest way to move that ` +
     `number is the table above, not a better fund.`;
+}
+
+/* ---------------- milestones actually reached ---------------- */
+
+/* Round numbers, deliberately. A ladder derived from the current book -
+   "20% more than today" - moves every time the market does, so you could
+   never be close to one, and something you can never be close to is not a
+   goal. */
+const VALUE_RUNGS = [5000, 10000, 25000, 30000, 40000, 50000, 75000, 100000,
+                     150000, 200000, 250000, 500000, 1000000];
+const PENSION_RUNGS = [5000, 10000, 25000, 50000, 100000, 250000, 500000];
+
+const bookWord = () =>
+  BOOK === "Combined" ? "Both books together" : `${BOOK}'s book`;
+
+/* Everything true right now, not everything new - Celebrate.bank works out
+   which of these had not been seen before. */
+function achievementsNow(value) {
+  const items = [];
+
+  for (const rung of VALUE_RUNGS) {
+    if (value < rung) continue;
+    items.push({
+      id: `value.${BOOK}.${rung}`,
+      label: fmtEur(rung),
+      detail: `${bookWord()} crossed ${fmtEur(rung)} of priced holdings.`,
+      grand: rung >= 100000,
+    });
+  }
+
+  // The deposit is a household target - a house is bought once - so it is
+  // banked against the household, not against whichever book is on screen.
+  const goal = DATA.goal || {};
+  if (goal.target > 0) {
+    if (goal.held >= goal.target / 2) items.push({
+      id: "goal.deposit.half",
+      label: "Half the deposit",
+      detail: `${fmtEur(goal.held)} of the ${fmtEur(goal.target)} mortgage deposit is saved.`,
+    });
+    if (goal.held >= goal.target) items.push({
+      id: "goal.deposit.full",
+      label: "Deposit saved",
+      detail: `The full ${fmtEur(goal.target)} mortgage deposit is there.`,
+      grand: true,
+    });
+  }
+
+  /* "Optimal portfolio" in the only sense the page can check: the rebalance
+     plan has nothing left worth trading. Not that the mix is perfect - that
+     the distance to the target is smaller than the cost of closing it. */
+  const plan = view().plan;
+  if (plan && !plan.sells.length && !plan.buys.length) items.push({
+    id: `plan.ontarget.${BOOK}`,
+    label: "At target allocation",
+    detail: `${bookWord()} is close enough to the growth-optimal mix that no trade clears the minimum size.`,
+    grand: true,
+  });
+
+  // Worth a firework because it is the one that costs real money: an order
+  // sized off a share count nobody has reconciled is the expensive mistake.
+  if (Array.isArray(DATA.corrections) && !DATA.corrections.length) items.push({
+    id: "data.reconciled",
+    label: "Books reconciled",
+    detail: "Every position in the sheet is accounted for by an imported statement.",
+  });
+
+  return items;
+}
+
+/* Called from the pension tab rather than here: the pot comes from the API
+   and is not known at overview render time. */
+function bankPension(owner, total) {
+  if (!(total > 0) || !owner) return;
+  const items = PENSION_RUNGS.filter(r => total >= r).map(r => ({
+    id: `pension.${owner}.${r}`,
+    label: `Pension ${fmtEur(r)}`,
+    detail: `${owner}'s pension pot passed ${fmtEur(r)}.`,
+    grand: r >= 100000,
+  }));
+  celebrate(Celebrate.bank(items));
+}
+
+function celebrate(fresh) {
+  if (!fresh.length) return;
+  Celebrate.announce(fresh);
+  Celebrate.fire({ count: fresh.some(f => f.grand) ? 15 : 8 });
+  const panel = document.getElementById("milestonePanel");
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function renderAchievements(value) {
+  const box = document.getElementById("achievementBox");
+  if (!box) return;
+
+  /* An edit is a hypothesis. Banking off one would turn a number typed in
+     to see what would happen into a permanent achievement, and there is no
+     way to un-bank it. */
+  if (!isEdited()) celebrate(Celebrate.bank(achievementsNow(value)));
+
+  box.innerHTML = "";
+
+  const next = VALUE_RUNGS.find(r => r > value);
+  if (next) {
+    const pct = Math.max(0, Math.min(100, (value / next) * 100));
+    const card = el("div", { class: "mstone-next" });
+    card.append(el("div", { class: "top" },
+      el("div", {}, "Next: ", el("strong", {}, fmtEur(next)),
+        BOOK === "Combined" ? " for both books together" : ` for ${BOOK}'s book`),
+      el("div", { class: "muted" }, `${fmtEur(next - value)} to go · ${pct.toFixed(1)}%`)));
+    const bar = el("div", { class: "mstone-bar" });
+    bar.append(el("i", { style: `width:${pct.toFixed(2)}%` }));
+    card.append(bar);
+    box.append(card);
+  }
+
+  const banked = Celebrate.achieved();
+  if (!banked.length) {
+    box.append(el("p", { class: "muted" }, "Nothing banked yet."));
+  } else {
+    const list = el("div", { class: "mstone-list" });
+    const today = new Date().toISOString().slice(0, 10);
+    for (const m of banked.slice(0, 24)) {
+      const day = (m.at || "").slice(0, 10);
+      list.append(el("div", { class: "mstone" + (day === today ? " new" : ""), title: m.detail || "" },
+        el("b", {}, m.label || m.id), el("span", {}, day)));
+    }
+    box.append(list);
+  }
+
+  const replay = el("button", { class: "btn ghost", style: "margin-top:14px" }, "Replay the fireworks");
+  replay.addEventListener("click", () => {
+    if (!Celebrate.fire({ count: 12 })) {
+      alert("Your system is set to reduce motion, so the fireworks stay off.");
+    }
+  });
+  box.append(replay);
+
+  const seeded = Celebrate.seededAt();
+  document.getElementById("achievementNote").textContent = seeded
+    ? `Score-keeping started ${seeded.slice(0, 10)}; anything already true then was banked without a ` +
+      `celebration, so the next firework marks something genuinely new. Kept in this browser only — ` +
+      `a different device starts its own count.`
+    : "";
 }
 
 /* ---------------- orders ---------------- */

@@ -260,10 +260,14 @@ def build(agent_dir: str, allocation: float = 0.10,
         corrections.extend(fixes)
     all_holdings = corrected
     if corrections:
-        print(f"  statements corrected {len(corrections)} holding(s):")
+        # Share counts are never touched - only the price is refreshed - so
+        # the euro move here is the market's, not a reconciliation.
+        print(f"  {len(corrections)} holding(s) the statements do not agree with "
+              f"(share counts left as the sheet has them, price refreshed):")
         for fix in corrections:
-            print(f"    {fix['ticker']:9} {fix['reason']:26} "
-                  f"EUR {fix['sheetValue']:>9,.2f} -> {fix['newValue']:>9,.2f}")
+            print(f"    {fix['ticker']:9} sheet {fix['sheetShares']:>9,.4f} vs "
+                  f"statements {fix['ledgerShares']:>9,.4f}  "
+                  f"EUR {fix['sheetValue']:>9,.2f} -> {fix['newValue']:>9,.2f}  {fix['reason']}")
 
     print("Reading trend...")
     trends = optimise.trend_signals(closes)
