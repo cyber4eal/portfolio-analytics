@@ -18,3 +18,4 @@ data/*.csv
 data/transactions.jsonl
 data/pension.json
 data/*.jsonl
+logs/

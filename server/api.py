@@ -20,6 +20,8 @@ import argparse
 import json
 import os
 import sys
+import threading
+import time
 import traceback
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +35,51 @@ from fundengine import advice, ledger, pension    # noqa: E402
 
 AGENT_DIR = os.environ.get("AGENT_DIR", "")
 MAX_BODY = 64 * 1024
+
+#: A rebuild takes tens of seconds and hits Yahoo, so recording three trades
+#: in a row should cause one rebuild, not three.
+REBUILD_DEBOUNCE_SECONDS = 90
+_rebuild_lock = threading.Lock()
+_rebuild_state = {"running": False, "queuedAt": 0.0, "lastFinished": 0.0,
+                  "lastResult": None}
+
+
+def _run_rebuild() -> None:
+    """Rebuild the payload in the background.
+
+    Recording a trade changes the sheet immediately but the charts come from
+    a build artefact, so without this the page would keep showing the old
+    book until someone remembered to rebuild. Failures are recorded and
+    surfaced rather than raised: a failed rebuild must not lose the trade
+    that triggered it.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "fundengine", "refresh", "--quiet"],
+            cwd=str(REPO), capture_output=True, text=True, timeout=600)
+        _rebuild_state["lastResult"] = (
+            "ok" if result.returncode == 0
+            else f"failed: {(result.stderr or '').strip()[-300:]}")
+    except Exception as exc:                                  # noqa: BLE001
+        _rebuild_state["lastResult"] = f"failed: {type(exc).__name__}: {exc}"
+    finally:
+        _rebuild_state["running"] = False
+        _rebuild_state["lastFinished"] = time.time()
+
+
+def request_rebuild(force: bool = False) -> str:
+    with _rebuild_lock:
+        if _rebuild_state["running"]:
+            return "already running"
+        since = time.time() - _rebuild_state["lastFinished"]
+        if not force and since < REBUILD_DEBOUNCE_SECONDS:
+            return f"skipped, rebuilt {since:.0f}s ago"
+        _rebuild_state["running"] = True
+        _rebuild_state["queuedAt"] = time.time()
+    threading.Thread(target=_run_rebuild, daemon=True).start()
+    return "started"
 
 
 def _sheets_client():
@@ -160,9 +207,15 @@ class Handler(SimpleHTTPRequestHandler):
         query = parse_qs(route.query)
         portfolio = (query.get("portfolio") or [None])[0]
         try:
+            if route.path == "/api/rebuild":
+                return self._send(200, {"status": _rebuild_state["lastResult"],
+                                        "running": _rebuild_state["running"],
+                                        "lastFinished": _rebuild_state["lastFinished"]})
             if route.path == "/api/health":
                 return self._send(200, {
                     "ok": True,
+                    "rebuild": _rebuild_state["lastResult"],
+                    "rebuilding": _rebuild_state["running"],
                     "sheetWrites": bool(AGENT_DIR),
                     "ledger": str(ledger.LEDGER),
                     "trades": len(ledger.read_all()),
@@ -200,6 +253,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._record(body)
             if route.path == "/api/pension/holdings":
                 pension.set_holdings(body.get("holdings") or [])
+                request_rebuild()
                 return self._send(200, pension.accrue(pension.summary()))
             if route.path == "/api/pension/contribution":
                 pension.add_contribution(body)
@@ -211,6 +265,8 @@ class Handler(SimpleHTTPRequestHandler):
                 pension.set_contribution_override(
                     None if raw in (None, "", "auto") else float(raw))
                 return self._send(200, pension.accrue(pension.summary()))
+            if route.path == "/api/rebuild":
+                return self._send(202, {"rebuild": request_rebuild(force=True)})
             if route.path == "/api/size":
                 return self._send(200, advice.size_position(
                     side=body.get("side", "buy"),
@@ -264,6 +320,9 @@ class Handler(SimpleHTTPRequestHandler):
             )
             result["sheet"] = "updated"
             trade.applied_to_sheet = True
+            # The charts come from a build artefact, so a trade that moved
+            # the sheet has to move the payload too.
+            result["rebuild"] = request_rebuild()
         except Exception as exc:                                  # noqa: BLE001
             traceback.print_exc()
             result["sheet"] = "failed"

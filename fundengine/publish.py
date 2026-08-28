@@ -286,8 +286,22 @@ def build(agent_dir: str, allocation: float = 0.10,
         }
     print(f"  {len(book_views)} view(s): {', '.join(book_views)}")
 
+    # How old is the oldest thing feeding this build. The page uses it to
+    # say plainly whether the numbers are today's or last week's, because a
+    # rebalance plan computed against stale prices looks exactly like one
+    # computed against live ones.
+    freshness = {
+        "builtAt": dt.datetime.now().isoformat(timespec="seconds"),
+        "pricesAsOf": matrix.index[-1].date().isoformat(),
+        "sheetReadAt": dt.datetime.now().isoformat(timespec="seconds"),
+        "ledgerTrades": len(all_trades),
+        "lastTrade": max((t["date"] for t in all_trades), default=None),
+        "pensionStatement": pension_payload.get("lastStatement"),
+    }
+
     return {
         "generated": dt.datetime.now().isoformat(timespec="seconds"),
+        "freshness": freshness,
         "asOf": matrix.index[-1].date().isoformat(),
         "currency": "EUR",
         "benchmarkTicker": universe.BENCHMARK_TICKER,

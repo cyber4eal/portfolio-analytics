@@ -78,6 +78,48 @@ ledger and the sheet immediately, but the charts only move on the next
 rebuild. The Transactions and Pension tabs read live from the API, so what
 you entered is visible there straight away.
 
+## Keeping it current
+
+Three different things go stale at three different rates, and only one of
+them is automatic today.
+
+| What | Where it lives | How it refreshes |
+| --- | --- | --- |
+| Holdings edits, blends, simulations, surfaces | in the page | instantly, from the shipped return matrix |
+| Explore lookups | `/api/quote` | live, cached an hour |
+| Prices, the four theories, the plan, trend signals, hedges | `site/data.json` | only on a build |
+| Ledger and pension | `data/` via the API | immediately on write |
+
+So the age of the build is the age of the advice. The masthead says how old
+it is and turns amber past 36 hours, because a rebalance plan computed
+against week-old prices looks exactly like one computed against this
+morning's.
+
+Three ways it refreshes:
+
+1. **Daily, unattended** — the launchd agent below.
+2. **On a trade** — recording a trade through the site triggers a rebuild in
+   the background, debounced so three trades in a row cause one rebuild.
+3. **On demand** — the *refresh* button in the masthead, which appears
+   whenever the API is reachable.
+
+### The daily job
+
+```bash
+cp deploy/com.bond.portfolio-refresh.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.bond.portfolio-refresh.plist && launchctl start com.bond.portfolio-refresh
+```
+
+It runs at 18:30 and writes to `logs/refresh.log`. Add `--deploy` to the
+plist's arguments once the VPS is set up and it will rsync after building.
+
+launchd rather than cron, deliberately: a cron job on macOS runs outside the
+GUI login session and does not inherit its network entitlements, so it fails
+to reach Yahoo and Google in ways that take an afternoon to diagnose.
+
+It runs on the Mac rather than the VPS because the Google service account
+lives here and the build reads the live sheet. The VPS only ever receives
+the finished static site.
+
 ## Rebuilding on a schedule
 
 The build needs the Google service account, which lives on this Mac in the

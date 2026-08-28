@@ -208,6 +208,36 @@ const gridScale = (extra = {}) => Object.assign({
   grid: { color: LINE(), drawTicks: false }, border: { display: false },
 }, extra);
 
+/* ---------------- freshness ---------------- */
+
+/* Prices, the theories, the rebalance plan and the trend signals are all
+   frozen into the payload at build time. Only the holdings editor and the
+   simulations recompute in the page. So the age of the build is the age of
+   the advice, and saying so plainly is the difference between a tool and a
+   trap - a plan computed against week-old prices looks exactly like one
+   computed against this morning's. */
+
+function ageInDays(iso) {
+  if (!iso) return null;
+  return (Date.now() - new Date(iso).getTime()) / 86400000;
+}
+
+function renderFreshness() {
+  const f = DATA.freshness || {};
+  const built = f.builtAt || DATA.generated;
+  const age = ageInDays(built);
+  const stale = age !== null && age > 1.5;
+  const label = age === null ? ""
+    : age < 1 / 24 ? "just now"
+    : age < 1 ? `${Math.round(age * 24)}h ago`
+    : `${Math.round(age)} days ago`;
+
+  document.getElementById("asof").innerHTML =
+    `Prices as at <strong>${DATA.asOf}</strong><br>` +
+    `built <span class="${stale ? "stale" : "fresh"}">${label}</span>` +
+    (stale ? " — advice may be out of date" : "");
+}
+
 /* ---------------- theme ---------------- */
 
 function currentTheme() {
@@ -1077,8 +1107,7 @@ function renderCaveats() {
 
 async function boot() {
   DATA = await (await fetch("data.json")).json();
-  document.getElementById("asof").innerHTML =
-    `Prices as at <strong>${DATA.asOf}</strong><br>built ${DATA.generated.replace("T", " ")}`;
+  renderFreshness();
   const picker = document.getElementById("bookSelect");
   for (const name of DATA.books) picker.append(el("option", { value: name }, name));
   picker.value = DATA.defaultBook;
@@ -1132,6 +1161,39 @@ async function boot() {
 
   applyTheme(currentTheme());
   document.getElementById("themeToggle").addEventListener("click", toggleTheme);
+  // A rebuild is what makes the theories, the plan and the trend signals
+  // move; the button only appears when there is an API able to run one.
+  const refresh = document.getElementById("refreshNow");
+  checkApi().then(() => {
+    if (!API) return;
+    refresh.style.display = "";
+    refresh.addEventListener("click", async () => {
+      refresh.disabled = true;
+      refresh.textContent = "rebuilding…";
+      try {
+        await fetch("/api/rebuild", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: "{}" });
+        for (let i = 0; i < 40; i++) {
+          await new Promise(r => setTimeout(r, 3000));
+          const state = await apiGet("/api/rebuild");
+          if (!state.running) {
+            if (state.status && state.status.startsWith("failed")) {
+              refresh.textContent = "rebuild failed";
+              return;
+            }
+            location.reload();
+            return;
+          }
+        }
+        refresh.textContent = "still going…";
+      } catch (e) {
+        refresh.textContent = "rebuild failed";
+      } finally {
+        refresh.disabled = false;
+      }
+    });
+  });
+
   document.getElementById("exploreGo").addEventListener("click", () => renderExplore());
   document.getElementById("exploreTicker").addEventListener("keydown", e => {
     if (e.key === "Enter") renderExplore();

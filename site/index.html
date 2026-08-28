@@ -56,6 +56,8 @@ button{font:inherit;cursor:pointer}
 .bookpick label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--slate)}
 .bookpick select{font-size:15px;padding:8px 11px;border:1px solid var(--ink);min-width:150px;background:var(--paper);color:var(--ink)}
 .asat{font-size:12.5px;color:var(--slate);text-align:right;line-height:1.7}
+.asat .stale{color:#B07C1F;font-weight:600}
+.asat .fresh{color:var(--green);font-weight:600}
 
 .ribbon{background:var(--navy);color:#fff;font-size:12.5px;padding:7px 24px;text-align:center}
 .ribbon b{color:var(--c10)}
@@ -168,6 +170,7 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
     </div>
     <button class="themeToggle" id="themeToggle" title="Switch between light and dark" aria-label="Switch theme"></button>
     <div class="asat" id="asof">loading…</div>
+    <button class="btn ghost" id="refreshNow" style="display:none;margin-left:12px">refresh</button>
   </div>
 </div>
 <div class="ribbon">Personal research tool — <b>not investment advice</b>, and not affiliated with any fund provider.</div>

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily rebuild of the Bond Portfolio Centre.
+
+  launchd, not cron. A cron job on macOS runs outside the GUI login session
+  and does not inherit the network entitlements that session has, so it
+  fails to reach Yahoo and Google in ways that are tedious to diagnose.
+  launchd agents loaded into the user session do not have that problem.
+
+  This runs on the Mac rather than the VPS because the Google service
+  account lives here, and the build reads the live Holdings sheet. The VPS
+  only ever receives the finished static site.
+
+  Install:
+    cp deploy/com.bond.portfolio-refresh.plist ~/Library/LaunchAgents/
+    launchctl load  ~/Library/LaunchAgents/com.bond.portfolio-refresh.plist
+    launchctl start com.bond.portfolio-refresh      # run once now
+
+  Check:  launchctl list | grep bond
+  Logs:   ~/portfolio-analytics/logs/refresh.log
+  Remove: launchctl unload ~/Library/LaunchAgents/com.bond.portfolio-refresh.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bond.portfolio-refresh</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>-m</string>
+    <string>fundengine</string>
+    <string>refresh</string>
+    <string>--quiet</string>
+    <!-- Add <string>--deploy</string> once the VPS is set up. -->
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/catalin_main/portfolio-analytics</string>
+
+  <!-- 18:30 local: after the US open has had a few hours and well after
+       European close, so a build lands on a full day of prices. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+
+  <!-- If the Mac was asleep at 18:30, run once on wake rather than skipping
+       the day entirely. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/catalin_main/portfolio-analytics/logs/refresh.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/catalin_main/portfolio-analytics/logs/refresh.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

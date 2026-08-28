@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import importers, ledger, pension, publish
 
@@ -17,7 +18,12 @@ DEFAULT_AGENT_DIR = (
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fundengine")
-    parser.add_argument("command", choices=["build", "import", "import-pension"])
+    parser.add_argument("command",
+                        choices=["build", "refresh", "import", "import-pension"])
+    parser.add_argument("--deploy", action="store_true",
+                        help="rsync the built site to the VPS after building")
+    parser.add_argument("--quiet", action="store_true",
+                        help="only print on failure - for scheduled runs")
     parser.add_argument("--file", action="append", default=[],
                         help="broker statement to import (repeatable)")
     parser.add_argument("--portfolio", default="Catalin",
@@ -33,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
                              "of the live sheet (no Google credentials needed)")
     args = parser.parse_args(argv)
 
+    if args.command == "refresh":
+        return _refresh(args)
     if args.command == "import":
         return _import(args)
     if args.command == "import-pension":
@@ -141,6 +149,45 @@ def _import_pension(args) -> int:
         pension.add_contribution(c)
         added += 1
     print(f"\nwrote {len(holdings)} holding(s) and {added} contribution(s)")
+    return 0
+
+
+def _refresh(args) -> int:
+    """Rebuild, and optionally push to the VPS. Meant for a scheduler.
+
+    Quiet on success and loud on failure, because a daily job that chatters
+    gets ignored and then its failures get ignored with it. Errors go to
+    stderr with a stack trace so a launchd log is worth reading.
+    """
+    import io
+    import contextlib
+    import subprocess
+    import traceback
+
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer if args.quiet else sys.stdout):
+            payload = publish.build(args.agent_dir, allocation=args.allocation,
+                                    from_csv=args.from_csv)
+            publish.write(payload)
+            publish.write_snapshot(payload)
+    except Exception:                                         # noqa: BLE001
+        sys.stderr.write(buffer.getvalue())
+        traceback.print_exc()
+        return 1
+
+    if not args.quiet:
+        print(f"Refreshed, prices as at {payload['asOf']}.")
+
+    if args.deploy:
+        script = Path(__file__).resolve().parent.parent / "deploy" / "deploy.sh"
+        result = subprocess.run([str(script)], capture_output=True, text=True)
+        if result.returncode != 0:
+            sys.stderr.write(buffer.getvalue())
+            sys.stderr.write(result.stdout + result.stderr)
+            return result.returncode
+        if not args.quiet:
+            print(result.stdout.strip().splitlines()[-1] if result.stdout else "Deployed.")
     return 0
 
 if __name__ == "__main__":
