@@ -1038,6 +1038,9 @@ function renderDerived() {
   renderAdditions(tickers, weights, value, mine);
   renderFrontier();
   renderStress(mine);
+  renderTheories();
+  renderPlan();
+  renderHedges();
   renderAdvice(mine, value);
 
   if (document.getElementById("view-simulate").classList.contains("on")) {
@@ -2132,4 +2135,218 @@ async function renderExplore(ticker) {
     (suggestion.flag || "") + " Set conviction yourself on the Advice tab."));
   impact.append(impactBody);
   box.append(impact);
+}
+
+/* ---------------- portfolio theory ---------------- */
+
+const THEORY_LABELS = {
+  current: ["As it stands", "what you hold today"],
+  growth: ["Growth-optimal", "maximises return − vol²∕2, the rate wealth compounds at"],
+  sharpe: ["Best risk-adjusted", "maximises return per unit of risk"],
+  minvar: ["Least risk", "ignores return entirely"],
+  parity: ["Risk parity", "every holding contributes the same risk"],
+};
+
+function renderTheories() {
+  const opt = view().optimisation;
+  const box = document.getElementById("theoryTable");
+  const caveat = document.getElementById("theoryCaveat");
+  box.innerHTML = "";
+  if (!opt) {
+    caveat.textContent = "Not enough overlapping history in this book to optimise.";
+    return;
+  }
+
+  const order = ["current", "growth", "sharpe", "minvar", "parity"];
+  const rows = order.filter(k => opt.theories[k]).map(key => {
+    const t = opt.theories[key];
+    const entries = Object.entries(t.weights).sort((a, b) => b[1] - a[1]);
+    const shown = entries.slice(0, 3)
+      .map(([ticker, pct]) => `${ticker} ${pct.toFixed(0)}%`).join(", ");
+    const rest = entries.length - 3;
+    const top = shown + (rest > 0 ? ` +${rest} more` : "");
+    return {
+      cls: key === "current" ? "me" : "",
+      cells: [
+        { node: el("span", {}, el("strong", {}, THEORY_LABELS[key][0]),
+            el("div", { class: "muted", style: "font-size:12px" }, THEORY_LABELS[key][1])) },
+        fmtPct(t.expectedReturn), fmtPct(t.vol),
+        { text: "−" + fmtPct(t.drag), cls: "muted" },
+        { text: fmtPct(t.growth), cls: key === "current" ? "" : (t.growthGain > 0 ? "pos" : "neg") },
+        { text: key === "current" ? "—" : signed(t.growthGain) + "pp",
+          cls: t.growthGain > 0 ? "pos" : "neg" },
+        { text: top, cls: "muted" },
+      ],
+    };
+  });
+  box.append(table(["Theory", "Expected return", "Volatility", "Drag", "Compounds at",
+                    "vs today", "Mostly"], rows, { numFrom: 1 }));
+
+  // What the difference is actually worth over time.
+  const current = opt.theories.current, best = opt.theories.growth;
+  const years = 10;
+  const growthOf = t => Math.pow(1 + t.growth / 100, years);
+  chart("chartTheories", {
+    type: "bar",
+    data: {
+      labels: order.filter(k => opt.theories[k]).map(k => THEORY_LABELS[k][0]),
+      datasets: [
+        { label: "Expected return", data: order.filter(k => opt.theories[k])
+            .map(k => opt.theories[k].expectedReturn), backgroundColor: "#B8C4CC" },
+        { label: "Compounds at", data: order.filter(k => opt.theories[k])
+            .map(k => opt.theories[k].growth), backgroundColor: "#0F7E82" },
+      ],
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10 } },
+        datalabels: { display: false },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(2)}%` } } },
+      scales: { x: gridScale({ grid: { display: false } }),
+                y: gridScale({ ticks: { callback: v => v + "%" } }) },
+    },
+  });
+
+  const multipleNow = growthOf(current), multipleBest = growthOf(best);
+  caveat.innerHTML =
+    `<strong>Your book is taking ${fmtPct(current.vol)} volatility to earn an expected ${fmtPct(current.expectedReturn)}, ` +
+    `so it compounds at ${fmtPct(current.growth)}.</strong> The growth-optimal mix earns a higher expected ` +
+    `${fmtPct(best.expectedReturn)} at ${fmtPct(best.vol)} — more return for half the risk — and compounds at ` +
+    `${fmtPct(best.growth)}. Over ${years} years that is ${multipleNow.toFixed(2)}× against ${multipleBest.toFixed(2)}×. ` +
+    `The uncomfortable part is that the way to more money here is <em>less</em> risk, not more.<br><br>` +
+    `That conclusion rests on one assumption worth naming: expected returns are CAPM — each asset earns what its ` +
+    `beta entitles it to and nothing more. The optimiser therefore cannot see any edge you think you have in ` +
+    `PLTR or NVDA, and prices concentrated single-stock risk as unpaid. If you genuinely expect those to beat ` +
+    `their beta, the honest reading is that you are being paid for a view the model does not hold, not that the ` +
+    `model has found free money. Feeding it historical returns instead would be worse: it would put the entire ` +
+    `book into whatever ran hottest. Weights are capped at ${(opt.cap * 100).toFixed(0)}% per line.`;
+}
+
+function renderHedges() {
+  const rows = view().hedges || [];
+  const box = document.getElementById("hedgeTable");
+  box.innerHTML = "";
+  if (!rows.length) {
+    document.getElementById("hedgeNote").textContent = "Not enough history to test hedges in this book.";
+    return;
+  }
+  const named = t => (DATA.funds.find(f => f.ticker === t) || {}).name || t;
+  box.append(table(
+    ["Fund", "Best size", "Growth gain", "Δ vol", "Δ return", "Corr.", "In your worst 10%", "Change"],
+    rows.slice(0, 12).map(r => ({
+      cells: [
+        named(r.ticker),
+        fmtPct1(r.optimalWeightPct),
+        { text: signed(r.growthGain) + "pp", cls: r.growthGain > 0 ? "pos" : "neg" },
+        { text: signed(r.volChange) + "pp", cls: r.volChange < 0 ? "pos" : "neg" },
+        signed(r.returnChange) + "pp",
+        fmtNum(r.correlation),
+        fmtNum(r.stressCorrelation),
+        { text: r.deterioration === undefined ? "–" : signed(r.deterioration),
+          cls: r.deterioration > 0.05 ? "neg" : r.deterioration < -0.05 ? "pos" : "muted" },
+      ],
+    })), { numFrom: 1 }));
+
+  const worst = [...rows].filter(r => r.deterioration !== undefined)
+    .sort((a, b) => b.deterioration - a.deterioration)[0];
+  const best = [...rows].filter(r => r.stressCorrelation !== undefined)
+    .sort((a, b) => a.stressCorrelation - b.stressCorrelation)[0];
+  const parts = [];
+  if (best) {
+    parts.push(`<strong>${named(best.ticker)}</strong> holds up best when your book is falling — ` +
+      `correlation ${fmtNum(best.stressCorrelation)} on your worst days, and it averages ` +
+      `${best.meanOnBadDays >= 0 ? "+" : ""}${fmtNum(best.meanOnBadDays)}% on them.`);
+  }
+  if (worst && worst.deterioration > 0.05) {
+    parts.push(`<strong>${named(worst.ticker)}</strong> is the opposite trap: ${fmtNum(worst.correlation)} correlated ` +
+      `on ordinary days but ${fmtNum(worst.stressCorrelation)} on your worst ones. Diversification that ` +
+      `disappears in a selloff is diversification you were not actually holding.`);
+  }
+  parts.push("A size at the top of the range means the optimiser wants as much as it is allowed, " +
+    "not that the number is precise. Correlations are measured over the book's own window, which " +
+    "contains one real drawdown and no crisis — so read every stress figure here as a floor.");
+  document.getElementById("hedgeNote").innerHTML = parts.join("<br><br>");
+}
+
+/* ---------------- the plan ---------------- */
+
+function trendTag(row) {
+  if (row.vsAverage200 === null || row.vsAverage200 === undefined) return "";
+  const above = row.vsAverage200 >= 0;
+  return `${above ? "+" : ""}${row.vsAverage200.toFixed(1)}% vs 200d`;
+}
+
+function renderPlan() {
+  const plan = view().plan;
+  const box = document.getElementById("planBox");
+  const taxBox = document.getElementById("planTax");
+  box.innerHTML = "";
+  if (!plan || (!plan.sells.length && !plan.buys.length)) {
+    box.append(el("p", { class: "muted" },
+      "Your book is already close enough to the target that no trade clears the minimum size."));
+    taxBox.textContent = "";
+    return;
+  }
+
+  const month = plan.thisMonth;
+  box.append(el("p", { style: "margin-bottom:14px" },
+    el("strong", {}, "This month: "),
+    `sell ${month.sells.length} position${month.sells.length === 1 ? "" : "s"} raising ${fmtEur(month.raised)}, `,
+    `add ${fmtEur(month.newCash)} of new cash, and put ${fmtEur(month.spent)} to work. `,
+    `That uses ${month.freeSellsUsed} of your ${month.freeSells} free sells.`));
+
+  const rows = [
+    ...month.sells.map(t => ({ ...t, kind: "Sell" })),
+    ...month.buys.map(t => ({ ...t, kind: "Buy" })),
+  ];
+  const named = t => {
+    const fund = DATA.funds.find(f => f.ticker === t);
+    if (fund) return fund.name;
+    const held = view().holdings.find(h => h.ticker === t);
+    return held ? held.name : t;
+  };
+  box.append(table(["", "Holding", "Amount", "Shares", "Weight now", "Target", "Trend"],
+    rows.map(t => ({
+      cls: t.kind === "Sell" ? "" : "me",
+      cells: [
+        { text: t.kind + (t.partial ? " (part)" : ""), cls: t.kind === "Sell" ? "neg" : "pos" },
+        named(t.ticker),
+        fmtEur(t.euros),
+        t.shares ? fmtNum(t.shares) : "–",
+        fmtPct1(t.currentPct),
+        fmtPct1(t.targetPct),
+        { text: trendTag(t), cls: "muted" },
+      ],
+    })), { numFrom: 2 }));
+
+  box.append(el("p", { class: "note muted", style: "padding-top:12px" },
+    `The full move is ${fmtEur(plan.turnover)} of trading — ${plan.turnoverPct}% of the book — which at this ` +
+    `cash rate takes roughly ${plan.months} months. Nothing forces you to do it all: the first month captures ` +
+    `most of the concentration reduction, since the largest single-name positions go first.`));
+
+  // Tax is usually the biggest number nobody models.
+  const tax = plan.tax || {};
+  const growthGain = view().optimisation.theories.growth.growthGain;
+  const annual = view().priced * growthGain / 100;
+  const parts = [];
+  if (tax.tax > 0) {
+    const payback = tax.tax / Math.max(annual, 1);
+    parts.push(`<strong>Tax first.</strong> These sells realise ${fmtEur(tax.gain)} of gains. After the ` +
+      `${fmtEur(tax.exemption)} annual exemption that is ${fmtEur(tax.taxable)} taxable, ` +
+      `<strong>${fmtEur(tax.tax)} of CGT at ${(tax.rate * 100).toFixed(0)}%</strong> — payable now, against ` +
+      `roughly ${fmtEur(annual)} a year of extra compounding. It pays for itself in about ${payback.toFixed(1)} years, ` +
+      `so this is only worth doing if you intend to hold the new allocation for longer than that.`);
+  } else {
+    parts.push(`<strong>Tax first, and here it is the good news.</strong> These sells realise ${fmtEur(tax.gain)} of ` +
+      `net gains — losses on some positions offset the winners — which is inside the ${fmtEur(tax.exemption)} annual ` +
+      `exemption, so the CGT bill is <strong>nil</strong>. That will not be true next year if these positions keep ` +
+      `rising, which is an argument for doing it now rather than later.`);
+  }
+  if (tax.unknownBasis && tax.unknownBasis.length) {
+    parts.push(`No cost basis imported for ${tax.unknownBasis.map(r => r.ticker).join(", ")}, so their gains are ` +
+      `not in that figure. Import the statement covering them before relying on the tax number.`);
+  }
+  parts.push(`This is an estimate on average cost. Irish CGT is FIFO with a four-week rule on losses, so the ` +
+    `real figure will differ — treat it as the order of magnitude, not the return.`);
+  taxBox.innerHTML = parts.join("<br><br>");
 }

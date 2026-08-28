@@ -102,6 +102,8 @@ table.grid{width:100%;border-collapse:collapse;font-size:13.5px}
 .grid tr.me td{font-weight:600}
 .tablewrap{overflow:auto;max-height:520px}
 .tablewrap table.grid{min-width:700px}
+#theoryTable td:last-child,#hedgeTable td:first-child{min-width:230px}
+#theoryTable td:first-child{min-width:180px}
 .grid td:first-child{min-width:190px}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
 .muted{color:var(--slate)}
@@ -363,7 +365,32 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
   <section class="view" id="view-advice">
     <div class="section-head">
       <h2>Advice</h2>
-      <p>Mechanical consequences of the numbers, not recommendations. Every flag below is something you can check: this position contributes more risk than its weight, that pair moves together, this fund would change the shape. Whether any of it should be acted on is yours.</p>
+      <p>Mechanical consequences of the numbers, not recommendations. Four theories are run side by side because they optimise different things — where they agree you can be confident, and where they diverge is where the assumptions are doing the work.</p>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>What compounds fastest</h3>
+      <div class="body">
+        <p class="hint">Money compounds, so what gets maximised is expected <em>log</em> return: <strong>growth ≈ return − volatility²∕2</strong>. That second term is why a lower-returning mix can leave you richer, and why past a point more risk makes you poorer.</p>
+        <div class="tablewrap" id="theoryTable"></div>
+        <div class="chartbox" style="margin-top:18px"><canvas id="chartTheories"></canvas></div>
+      </div>
+      <div class="warnbox" id="theoryCaveat"></div>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>Hedges that hold up when it matters</h3>
+      <div class="body">
+        <p class="hint">Ranked by what each does to compounding at its own best size — not by how much volatility it removes, because a hedge that costs more return than the variance it saves makes you poorer slowly. The last two columns are the honest test: correlation on ordinary days against correlation on your worst 10%.</p>
+        <div class="tablewrap" id="hedgeTable"></div>
+      </div>
+      <p class="note" id="hedgeNote"></p>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>How to get there</h3>
+      <div class="body">
+        <p class="hint">The trades that move today's book toward the growth-optimal mix, cut to what one month can actually do given your cash and free sells. Trend does not change the destination — it only decides which trades go first.</p>
+        <div id="planBox"></div>
+      </div>
+      <div class="warnbox" id="planTax"></div>
     </div>
     <div id="adviceBox"></div>
   </section>

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import advice, combo, ledger, pension, portfolio as book, prices, profile, scenarios, universe
+from . import advice, combo, ledger, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -189,6 +189,9 @@ def build(agent_dir: str, allocation: float = 0.10,
     # writer then serialises the column label where a number should be.
     matrix = matrix.loc[:, ~matrix.columns.duplicated()]
 
+    print("Reading trend...")
+    trends = optimise.trend_signals(closes)
+
     print("Building each book's view...")
     book_views = {}
     for name in views:
@@ -232,6 +235,43 @@ def build(agent_dir: str, allocation: float = 0.10,
         book_views[name]["correlations"] = view_correlations
         book_views[name]["reconciliation"] = ledger.reconcile(
             all_trades, view_rows, None if name in (book.COMBINED, pension.BOOK) else name)
+        # Every theory, and hedges ranked by what they do to compounding.
+        try:
+            view_series = series
+            book_views[name]["optimisation"] = optimise.build(
+                holding_returns.reindex(columns=view_tickers), view_weights,
+                benchmark, candidates=fund_returns, cap=0.25)
+            book_views[name]["hedges"] = optimise.hedges(
+                holding_returns.reindex(columns=view_tickers), view_weights,
+                fund_returns, benchmark, view_series)
+            book_views[name]["stressCorrelation"] = optimise.stress_correlation(
+                pd.concat([holding_returns.reindex(columns=view_tickers),
+                           fund_returns], axis=1), view_series)
+            # The trades that get from here to the growth-optimal mix,
+            # sequenced by trend and cut to what a month can actually do.
+            latest = {t: float(closes[t].dropna().iloc[-1])
+                      for t in closes.columns if closes[t].notna().any()}
+            budgets = book_views[name]["advice"]["budgets"] if "advice" in book_views[name] else {}
+            book_views[name]["plan"] = optimise.rebalance_plan(
+                current={k: v for k, v in
+                         book_views[name]["optimisation"]["theories"]["current"]["weights"].items()},
+                target=book_views[name]["optimisation"]["theories"]["growth"]["weights"],
+                total_value=view_value,
+                trends=trends,
+                prices=latest,
+                monthly_cash=advice.MONTHLY_BUY_CASH_EUR,
+                free_sells=advice.MONTHLY_FREE_SELLS,
+            )
+            basis = ledger.positions(
+                all_trades, None if name in (book.COMBINED, pension.BOOK) else name)
+            book_views[name]["plan"]["tax"] = optimise.tax_on_plan(
+                book_views[name]["plan"]["sells"], view_rows, basis)
+        except ValueError as exc:
+            print(f"  {name}: optimisation skipped ({exc})")
+            book_views[name]["optimisation"] = None
+            book_views[name]["hedges"] = []
+            book_views[name]["stressCorrelation"] = []
+
         book_views[name]["advice"] = {
             "sell": advice.sell_candidates(
                 book_views[name]["riskContributions"], view_correlations,
@@ -263,6 +303,7 @@ def build(agent_dir: str, allocation: float = 0.10,
         "funds": [f.as_dict() for f in universe.UNIVERSE],
         "lines": [line.as_dict() for line in lines],
         "additions": {"allocation": allocation, "ranked": additions},
+        "trends": trends,
         "buyCandidates": advice.buy_candidates(
             additions, [f.as_dict() for f in universe.UNIVERSE], exposure, allocation),
         "ledger": ledger.summary(ledger.read_all()),

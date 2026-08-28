@@ -87,7 +87,17 @@ BY_ID = {f.id: f for f in UNIVERSE}
 BY_TICKER = {f.ticker: f for f in UNIVERSE}
 
 #: The yardstick every fund and the portfolio itself is regressed against.
-BENCHMARK_TICKER = "IWDA.AS"
+#:
+#: This is the exact share class held in the book - SSGA's S&P 500 UCITS ETF
+#: (Acc), Xetra line - rather than a generic index. Measuring against a line
+#: you cannot buy quietly flatters or punishes you by whatever the tracking
+#: difference and the currency line happen to be; measuring against the one
+#: you actually own asks the only question that matters, which is whether
+#: the rest of the book earned its place next to simply holding more of it.
+#:
+#: It carries less history than a broad index line (from 2023-11), which is
+#: not a constraint here: the book's own comparable window is shorter still.
+BENCHMARK_TICKER = "SPYL.DE"
 
 
 def tickers() -> list[str]:
