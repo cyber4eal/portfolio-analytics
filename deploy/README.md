@@ -33,6 +33,37 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 ```
 
+## The transaction API
+
+The site is static, but recording trades and editing the pension needs a
+writer. That runs on the VPS as a small stdlib-only service on localhost,
+reached only through nginx, so the basic auth above is the single door to
+something that can change share counts in a live spreadsheet.
+
+It imports the portfolio-agent checkout's `sheets_client` rather than
+keeping a second copy of the service account or a second idea of which book
+a row belongs to. One writer, one set of rules.
+
+```bash
+rsync -avz --exclude data --exclude .git ./ root@46.202.140.61:/opt/portfolio-analytics/
+```
+
+Then on the VPS:
+
+```bash
+cp /opt/portfolio-analytics/deploy/bond-api.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now bond-api && systemctl status bond-api --no-pager
+```
+
+Check it answers:
+
+```bash
+curl -s localhost:8001/api/health
+```
+
+`sheetWrites: true` means AGENT_DIR was found and trades will be mirrored to
+the sheet. `false` means the ledger still records everything and the mirror
+is off — which is the safe failure, not a broken one.
+
 ## Every rebuild, from this Mac
 
 ```bash
@@ -40,6 +71,12 @@ python3 -m fundengine build && ./deploy/deploy.sh
 ```
 
 Then open `http://46.202.140.61/` and sign in with the htpasswd user.
+
+Note the two halves have different lifetimes. Charts come from `data.json`,
+which is a build artefact — a trade recorded through the site updates the
+ledger and the sheet immediately, but the charts only move on the next
+rebuild. The Transactions and Pension tabs read live from the API, so what
+you entered is visible there straight away.
 
 ## Rebuilding on a schedule
 

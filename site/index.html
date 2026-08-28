@@ -34,6 +34,9 @@ button{font:inherit;cursor:pointer}
 .centre-title{font-size:27px;font-weight:300;letter-spacing:-.01em}
 .centre-title strong{font-weight:700}
 .masthead .spacer{flex:1}
+.bookpick{display:flex;flex-direction:column;gap:5px;margin-right:6px}
+.bookpick label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--slate)}
+.bookpick select{font-size:15px;padding:8px 11px;border:1px solid var(--ink);min-width:150px;background:var(--paper)}
 .asat{font-size:12.5px;color:var(--slate);text-align:right;line-height:1.7}
 
 .ribbon{background:var(--navy);color:#fff;font-size:12.5px;padding:7px 24px;text-align:center}
@@ -137,6 +140,10 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <div class="muted" style="font-size:13px" id="strapline">your book, measured against the funds you could buy instead</div>
     </div>
     <span class="spacer"></span>
+    <div class="bookpick">
+      <label for="bookSelect">Portfolio</label>
+      <select id="bookSelect"></select>
+    </div>
     <div class="asat" id="asof">loading…</div>
   </div>
 </div>
@@ -305,6 +312,37 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
         <div class="body"><div id="mcSummary"></div></div>
       </div>
     </div>
+  </section>
+
+  <section class="view" id="view-transactions">
+    <div class="section-head">
+      <h2>Transactions</h2>
+      <p>Record what you actually did — bought or sold, how many, at what price, on what date. The entry goes into an append-only ledger and, if you ask it to, updates the share count in the Google Sheet. The sheet holds only what you hold now; this is what gives you a cost basis.</p>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>Record a trade</h3>
+      <div class="body" id="txBox"></div>
+    </div>
+    <div class="panel wide">
+      <h3>Ledger</h3>
+      <div class="body" id="txList"></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-advice">
+    <div class="section-head">
+      <h2>Advice</h2>
+      <p>Mechanical consequences of the numbers, not recommendations. Every flag below is something you can check: this position contributes more risk than its weight, that pair moves together, this fund would change the shape. Whether any of it should be acted on is yours.</p>
+    </div>
+    <div id="adviceBox"></div>
+  </section>
+
+  <section class="view" id="view-pension">
+    <div class="section-head">
+      <h2>Pension</h2>
+      <p>Kept apart from the tradable books on purpose. The money is not accessible, most provider funds have no market ticker, and folding the pot into your weights would inflate every cap and budget that depends on the tradable total. It still counts towards what you have.</p>
+    </div>
+    <div id="pensionBox"></div>
   </section>
 
   <section class="view" id="view-stress">

@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 
-from . import combo, portfolio as book, prices, profile, scenarios, universe
+from . import advice, combo, ledger, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -38,19 +39,39 @@ def build(agent_dir: str, allocation: float = 0.10,
           from_csv: str | None = None) -> dict:
     if from_csv:
         print(f"Reading the book from {from_csv}...")
-        holdings = read_snapshot(Path(from_csv))
-        parked = sum(h.value_eur for h in holdings if not h.tradable)
+        all_holdings = read_snapshot(Path(from_csv))
     else:
         print("Reading the live book...")
-        holdings = book.read_holdings(agent_dir)
-        parked = book.read_untradable_value(agent_dir)
+        all_holdings = book.read_holdings(agent_dir)
+
+    # The pension is its own book: never merged into Combined, because the
+    # money is not accessible and folding it into tradable weights would
+    # inflate every budget and cap that depends on them.
+    pension_rows = pension.as_holdings()
+    if pension_rows:
+        all_holdings = all_holdings + pension_rows
+
+    names = [n for n in book.books(all_holdings) if n != pension.BOOK]
+    views = names + ([book.COMBINED] if len(names) > 1 else [])
+    if pension_rows:
+        views.append(pension.BOOK)
+    print(f"  {len(all_holdings)} rows across {len(names)} book(s): {', '.join(names)}")
+
+    # The default view is whichever book the agent is scoped to.
+    primary = os.environ.get("PORTFOLIO", names[0] if names else book.COMBINED)
+    if primary not in views:
+        primary = views[0]
+
+    holdings = book.for_book(all_holdings, primary)
+    parked = book.parked_value(holdings)
     weights = book.weights(holdings)
     tradable_value = sum(h.value_eur for h in holdings if h.tradable)
-    print(f"  {len(holdings)} lines, EUR {tradable_value:,.0f} priced, "
-          f"EUR {parked:,.0f} parked")
 
     print("Fetching prices...")
-    holding_tickers = [h.ticker for h in holdings if h.tradable]
+    # Every book's tickers, not just the active one: the per-book views and
+    # the pension all need price history, and a ticker missing from the
+    # matrix drops that whole view rather than just that row.
+    holding_tickers = sorted({h.ticker for h in all_holdings if h.tradable})
     fund_tickers = universe.tickers()
     closes = prices.download_closes(
         sorted(set(holding_tickers + fund_tickers + [universe.BENCHMARK_TICKER]))
@@ -62,7 +83,7 @@ def build(agent_dir: str, allocation: float = 0.10,
     fund_returns = prices.to_returns(closes[[t for t in fund_tickers if t in closes.columns]])
     benchmark = prices.to_returns(closes[[universe.BENCHMARK_TICKER]]).iloc[:, 0]
 
-    weights = weights.reindex(available_holdings).dropna()
+    weights = weights.reindex([t for t in weights.index if t in available_holdings]).dropna()
     weights = weights / weights.sum()
 
     print("Building the book's own series...")
@@ -121,6 +142,57 @@ def build(agent_dir: str, allocation: float = 0.10,
         [holding_returns, fund_returns, benchmark.rename("__benchmark__")],
         axis=1, join="outer",
     ).dropna(how="all")
+    # A ticker can be both a holding and a comparison fund - the pension holds
+    # VWCE.DE and the universe compares against it. Two columns of the same
+    # name make matrix[name] a DataFrame instead of a Series, and the payload
+    # writer then serialises the column label where a number should be.
+    matrix = matrix.loc[:, ~matrix.columns.duplicated()]
+
+    print("Building each book's view...")
+    book_views = {}
+    for name in views:
+        rows = book.for_book(all_holdings, name)
+        priced = [h for h in rows if h.tradable and h.ticker in closes.columns]
+        if not priced:
+            continue
+        view_value = sum(h.value_eur for h in priced)
+        view_weights = pd.Series({h.ticker: h.value_eur for h in priced}, dtype=float)
+        view_weights = view_weights / view_weights.sum()
+        series = combo.portfolio_returns(
+            holding_returns.reindex(columns=[h.ticker for h in priced]), view_weights)
+        book_views[name] = {
+            "name": name,
+            "holdings": [h.as_dict() for h in rows],
+            "priced": round(view_value, 2),
+            "parked": round(book.parked_value(rows), 2),
+            "riskContributions": scenarios.risk_contributions(
+                holding_returns.reindex(columns=[h.ticker for h in priced]), view_weights),
+            "income": profile.income([h.as_dict() for h in rows], profiles),
+            "exposure": profile.exposures([h.as_dict() for h in rows], profiles),
+            "stress": {
+                "drawdown": scenarios.drawdown_series(series),
+                "worstWindows": scenarios.worst_windows(series),
+                "episodes": scenarios.episodes(series),
+            },
+        }
+        view_correlations = scenarios.correlation_matrix(
+            holding_returns.reindex(columns=[h.ticker for h in priced]), view_weights)
+        view_rows = [h.as_dict() for h in rows]
+        hhi = float((view_weights ** 2).sum())
+        book_views[name]["correlations"] = view_correlations
+        book_views[name]["advice"] = {
+            "sell": advice.sell_candidates(
+                book_views[name]["riskContributions"], view_correlations,
+                view_rows, view_value),
+            "notes": advice.concentration_notes(
+                book_views[name]["exposure"], 1 / hhi if hhi else 0, len(priced)),
+            "budgets": {
+                "monthlyBuyCashEur": advice.MONTHLY_BUY_CASH_EUR,
+                "monthlyFreeSells": advice.MONTHLY_FREE_SELLS,
+                "maxNameWeightPct": advice.MAX_NAME_WEIGHT * 100,
+            },
+        }
+    print(f"  {len(book_views)} view(s): {', '.join(book_views)}")
 
     return {
         "generated": dt.datetime.now().isoformat(timespec="seconds"),
@@ -132,10 +204,17 @@ def build(agent_dir: str, allocation: float = 0.10,
             "parked": round(parked, 2),
             "book": round(tradable_value + parked, 2),
         },
+        "books": list(book_views),
+        "defaultBook": primary,
+        "bookViews": book_views,
         "holdings": [h.as_dict() for h in holdings],
         "funds": [f.as_dict() for f in universe.UNIVERSE],
         "lines": [line.as_dict() for line in lines],
         "additions": {"allocation": allocation, "ranked": additions},
+        "buyCandidates": advice.buy_candidates(
+            additions, [f.as_dict() for f in universe.UNIVERSE], exposure, allocation),
+        "ledger": ledger.summary(ledger.read_all()),
+        "pension": pension.summary(),
         "exposure": exposure,
         "income": income,
         "stress": stress,
@@ -192,11 +271,14 @@ def write_snapshot(payload: dict, out_dir: Path | None = None) -> Path:
         writer = csv.DictWriter(
             handle,
             fieldnames=["symbol", "ticker", "name", "shares", "value_eur",
-                        "currency", "tradable"],
+                        "currency", "tradable", "portfolio"],
         )
         writer.writeheader()
-        for holding in payload["holdings"]:
-            writer.writerow(holding)
+        for view in payload["bookViews"].values():
+            if view["name"] == "Combined":
+                continue          # a view, not a book - it would double-count
+            for holding in view["holdings"]:
+                writer.writerow(holding)
     print(f"  wrote {path}")
     return path
 
@@ -213,6 +295,7 @@ def read_snapshot(path: Path) -> list:
                 symbol=row["symbol"], ticker=row["ticker"], name=row["name"],
                 shares=float(row["shares"] or 0), value_eur=float(row["value_eur"]),
                 currency=row["currency"], tradable=row["tradable"] in ("True", "true", "1"),
+                portfolio=row.get("portfolio", ""),
             )
             for row in csv.DictReader(handle)
         ]

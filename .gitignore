@@ -14,3 +14,6 @@ site/data.json
 # The CSV snapshot is the same live book as data.json, in another format.
 # Force-add it deliberately if you ever want a dated copy versioned.
 data/*.csv
+# Ledger and pension hold live personal figures, same as data.json.
+data/transactions.jsonl
+data/pension.json

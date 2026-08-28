@@ -5,12 +5,19 @@
    screen is derived from weights at render time. */
 
 const TRADING_DAYS = 252, LAMBDA = 0.94, Z95 = 1.6448536269514722;
-const STORE_KEY = "bond.holdings.v1";
 const PALETTE = ["#14527A","#4A7FA5","#0F7E82","#2A9D9F","#7FB8B6",
                  "#0B1030","#3A3F66","#7C7FA0","#00B2A9","#6FD5CE"];
 const INK = "#1C1C1E", SLATE = "#5B5B62", LINE = "#E6E3DE";
 
 let DATA = null, holdings = [], charts = {}, worldGeo = null;
+let BOOK = null;              // which book is on screen
+let API = false;              // does the transaction API answer
+
+/* Every per-book number lives under bookViews. Reading DATA directly would
+   quietly show Catalin's exposure next to Stefani's holdings, which is the
+   exact failure the sheet's Portfolio column exists to prevent. */
+const view = () => DATA.bookViews[BOOK];
+const STORE_KEY_FOR = book => `bond.holdings.${book}.v1`;
 
 /* ---------------- matrix + statistics ---------------- */
 
@@ -113,21 +120,21 @@ function statsFor(tickers, weights, value, restrict) {
 
 /* ---------------- holdings state ---------------- */
 
-const sheetHoldings = () => DATA.holdings
+const sheetHoldings = () => view().holdings
   .filter(h => h.tradable && columnFor(h.ticker))
   .map(h => ({ ticker: h.ticker, name: h.name, value: h.value_eur }));
 
 function loadHoldings() {
-  try { const s = localStorage.getItem(STORE_KEY); if (s) return JSON.parse(s); }
+  try { const s = localStorage.getItem(STORE_KEY_FOR(BOOK)); if (s) return JSON.parse(s); }
   catch (e) { /* private window or storage off */ }
   return null;
 }
 function saveHoldings() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(holdings)); } catch (e) {}
+  try { localStorage.setItem(STORE_KEY_FOR(BOOK), JSON.stringify(holdings)); } catch (e) {}
 }
 function resetHoldings() {
   holdings = sheetHoldings();
-  try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+  try { localStorage.removeItem(STORE_KEY_FOR(BOOK)); } catch (e) {}
   renderAll();
 }
 function isEdited() {
@@ -208,14 +215,19 @@ function effectiveHoldings() {
 function renderKpis(stats, value) {
   const box = document.getElementById("kpis");
   box.innerHTML = "";
+  // The headline is everything you have, not the tradable slice. Leading
+  // with the priced half made a EUR 29k book read as EUR 19k, because cash,
+  // the deposit and the unlisted line sat in a subtitle.
+  const parked = view().parked;
   const cards = [
-    ["Priced book", fmtEur(value), `plus ${fmtEur(DATA.totals.parked)} parked`],
+    ["Total", fmtEur(value + parked),
+     `${fmtEur(value)} priced + ${fmtEur(parked)} cash & deposits`],
     ["Return p.a.", fmtPct(stats.cagr), `over ${(stats.days / TRADING_DAYS).toFixed(1)} years`],
     ["Volatility", fmtPct(stats.vol), "annualised, EWMA"],
     ["Beta", fmtNum(stats.beta), `vs ${DATA.benchmarkTicker}`],
     ["Worst drawdown", fmtPct(stats.maxDrawdown), "peak to trough, in sample"],
     ["1-day VaR 95%", fmtEur(stats.var95), `historical ${fmtEur(stats.varHist)}`],
-    ["Income", fmtEur(DATA.income.annual_eur), `${DATA.income.portfolio_yield}% yield`],
+    ["Income", fmtEur(view().income.annual_eur), `${view().income.portfolio_yield}% yield`],
     ["Diversification", effectiveHoldings().toFixed(1), `lines behaving like this many equal ones`],
   ];
   for (const [k, v, s] of cards) {
@@ -293,7 +305,7 @@ function topN(obj, n) {
 }
 
 function renderRiskBars() {
-  const rows = DATA.riskContributions.slice(0, 10);
+  const rows = view().riskContributions.slice(0, 10);
   chart("chartRisk", {
     type: "bar",
     data: {
@@ -410,7 +422,7 @@ function renderConcentration(value) {
 function renderHeatmap() {
   const box = document.getElementById("heatmapBox");
   box.innerHTML = "";
-  const { tickers } = DATA.correlations;
+  const { tickers } = view().correlations;
   const present = tickers.filter(t => holdings.some(h => h.ticker === t && h.value > 0));
   const use = present.length >= 3 ? present : tickers;
   const window_ = new Set(alignedRows(use).index);
@@ -444,12 +456,12 @@ function renderHeatmap() {
 function renderIncome() {
   const box = document.getElementById("incomeBox");
   box.innerHTML = "";
-  const rows = DATA.income.top.map(r => ({
+  const rows = view().income.top.map(r => ({
     cells: [r.name || r.ticker, { node: el("span", { class: "mono" }, r.ticker) },
             fmtPct(r.yield), fmtEur(r.annual_eur)],
   }));
   box.append(el("p", { class: "muted", style: "margin-bottom:12px" },
-    `${fmtEur(DATA.income.annual_eur)} a year at today's yields — a ${DATA.income.portfolio_yield}% book yield. That is ${(DATA.income.annual_eur / (20000 * 12) * 100).toFixed(2)}% of a €20k-a-month retirement income.`));
+    `${fmtEur(view().income.annual_eur)} a year at today's yields — a ${view().income.portfolio_yield}% book yield. That is ${(view().income.annual_eur / (20000 * 12) * 100).toFixed(2)}% of a €20k-a-month retirement income.`));
   box.append(table(["Payer", "Ticker", "Yield", "Annual €"], rows, { numFrom: 2 }));
 }
 
@@ -625,7 +637,7 @@ async function renderMap() {
     const topo = await (await fetch("vendor/countries-110m.json")).json();
     worldGeo = topojson.feature(topo, topo.objects.countries);
   }
-  const weights = DATA.exposure.countries;
+  const weights = view().exposure.countries;
   const max = Math.max(...Object.values(weights), 1);
   svg.innerHTML = "";
   const tip = document.getElementById("maptip");
@@ -656,12 +668,12 @@ async function renderMap() {
     el("i", { style: `background:${c}` }), labels[i] || "")));
 
   document.getElementById("mapNote").textContent =
-    `${DATA.exposure.lookThroughWeight.toFixed(0)}% of the book sits in funds and has been exploded through its index's published country weights. Those are hand-entered and approximate — read the shape, not the decimals.`;
+    `${view().exposure.lookThroughWeight.toFixed(0)}% of the book sits in funds and has been exploded through its index's published country weights. Those are hand-entered and approximate — read the shape, not the decimals.`;
 
   const rows = Object.entries(weights).map(([k, v]) => ({ cells: [k, fmtPct1(v)] }));
   document.getElementById("countryTable").replaceChildren(
     table(["Country", "Weight"], rows, { numFrom: 1 }));
-  const sectors = Object.entries(DATA.exposure.sectors).map(([k, v]) => ({ cells: [k, fmtPct1(v)] }));
+  const sectors = Object.entries(view().exposure.sectors).map(([k, v]) => ({ cells: [k, fmtPct1(v)] }));
   document.getElementById("sectorTable").replaceChildren(
     table(["Sector", "Weight"], sectors, { numFrom: 1 }));
 }
@@ -864,12 +876,12 @@ function renderStress(mine) {
 
   document.getElementById("windowsBox").replaceChildren(table(
     ["Rolling window", "Worst", "Best", "Worst ended"],
-    DATA.stress.worstWindows.map(w => ({
+    view().stress.worstWindows.map(w => ({
       cells: [w.window, { text: fmtPct(w.return), cls: w.return < 0 ? "neg" : "" },
               { text: fmtPct(w.best), cls: "pos" }, w.ended],
     })), { numFrom: 1 }));
 
-  const episodes = DATA.stress.episodes;
+  const episodes = view().stress.episodes;
   const box = document.getElementById("episodeBox");
   box.innerHTML = "";
   if (!episodes.length) {
@@ -888,8 +900,9 @@ function renderStress(mine) {
 /* ---------------- wiring ---------------- */
 
 const TABS = [
-  ["overview", "Overview"], ["holdings", "Holdings"], ["compare", "Against the funds"],
-  ["map", "Map & exposure"], ["simulate", "Simulate"], ["stress", "Stress"],
+  ["overview", "Overview"], ["holdings", "Holdings"], ["transactions", "Transactions"],
+  ["advice", "Advice"], ["compare", "Against the funds"], ["map", "Map & exposure"],
+  ["simulate", "Simulate"], ["stress", "Stress"], ["pension", "Pension"],
 ];
 
 function renderTabs() {
@@ -912,6 +925,8 @@ function selectTab(id) {
     b.setAttribute("aria-selected", b.dataset.tab === id ? "true" : "false"));
   location.hash = id;
   if (id === "map") renderMap();
+  if (id === "transactions") renderTransactions();
+  if (id === "pension") renderPension();
   if (id === "simulate") {
     const { tickers, weights, value } = currentWeights();
     runSimulation(statsFor(tickers, weights, value), value);
@@ -926,8 +941,8 @@ function renderDerived() {
 
   renderKpis(mine, value);
   renderGrowth(mine);
-  donut("chartSector", topN(DATA.exposure.sectors, 9));
-  donut("chartCurrency", topN(DATA.exposure.currencies, 6));
+  donut("chartSector", topN(view().exposure.sectors, 9));
+  donut("chartCurrency", topN(view().exposure.currencies, 6));
   renderRiskBars();
   renderYears(mine);
   renderConcentration(value);
@@ -940,6 +955,7 @@ function renderDerived() {
   renderAdditions(tickers, weights, value, mine);
   renderFrontier();
   renderStress(mine);
+  renderAdvice(mine, value);
 
   if (document.getElementById("view-simulate").classList.contains("on")) {
     runSimulation(mine, value);
@@ -947,6 +963,23 @@ function renderDerived() {
 }
 
 function renderAll() { renderHoldings(); renderDerived(); }
+
+/* Switching book swaps the entire dataset, including which edits apply:
+   holdings are stored per book, so an edit to Catalin's does not follow
+   you into Stefani's. */
+function selectBook(name) {
+  BOOK = name;
+  const picker = document.getElementById("bookSelect");
+  if (picker && picker.value !== name) picker.value = name;   // keep them in step
+  holdings = (loadHoldings() || sheetHoldings()).filter(h => columnFor(h.ticker));
+  document.getElementById("strapline").textContent =
+    BOOK === "Combined"
+      ? "both books together — a reporting view, never a book you can trade against"
+      : `${BOOK}'s book, measured against the funds you could buy instead`;
+  renderAll();
+  if (document.getElementById("view-map").classList.contains("on")) renderMap();
+  if (document.getElementById("view-transactions").classList.contains("on")) renderTransactions();
+}
 
 function renderCaveats() {
   const list = el("ul");
@@ -958,6 +991,11 @@ async function boot() {
   DATA = await (await fetch("data.json")).json();
   document.getElementById("asof").innerHTML =
     `Prices as at <strong>${DATA.asOf}</strong><br>built ${DATA.generated.replace("T", " ")}`;
+  const picker = document.getElementById("bookSelect");
+  for (const name of DATA.books) picker.append(el("option", { value: name }, name));
+  picker.value = DATA.defaultBook;
+  picker.addEventListener("change", e => selectBook(e.target.value));
+  BOOK = DATA.defaultBook;
   holdings = (loadHoldings() || sheetHoldings()).filter(h => columnFor(h.ticker));
 
   renderTabs();
@@ -993,9 +1031,455 @@ async function boot() {
   });
 
   renderCaveats();
-  renderAll();
+  selectBook(DATA.defaultBook);
   const hash = location.hash.replace("#", "");
   if (TABS.some(t => t[0] === hash)) selectTab(hash);
 }
 
 boot();
+
+/* ---------------- transactions ---------------- */
+
+/* The ledger lives on the server, so the tab degrades honestly when the API
+   is not there: you can still read what the build baked in, but the form
+   says why it cannot record anything rather than pretending to. */
+
+async function apiGet(path) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`${response.status}`);
+  return response.json();
+}
+
+async function checkApi() {
+  try {
+    const health = await apiGet("/api/health");
+    API = true;
+    return health;
+  } catch (e) { API = false; return null; }
+}
+
+function tradeForm(health) {
+  const tickers = [...new Set([...holdings.map(h => h.ticker),
+                               ...DATA.funds.map(f => f.ticker)])].sort();
+  const ticker = el("input", { list: "tickerList", placeholder: "NVDA", style: "width:110px" });
+  const datalist = el("datalist", { id: "tickerList" }, tickers.map(t => el("option", { value: t })));
+  const action = el("select", {}, el("option", { value: "buy" }, "Bought"),
+                                  el("option", { value: "sell" }, "Sold"));
+  const shares = el("input", { type: "number", step: "any", min: "0", placeholder: "5", style: "width:90px" });
+  const price = el("input", { type: "number", step: "any", min: "0", placeholder: "195.80", style: "width:110px" });
+  const when = el("input", { type: "date", value: new Date().toISOString().slice(0, 10) });
+  const fee = el("input", { type: "number", step: "any", min: "0", value: "0", style: "width:80px" });
+  const note = el("input", { placeholder: "why", style: "width:150px" });
+  const toSheet = el("input", { type: "checkbox" });
+  toSheet.checked = true;
+  const status = el("div", { class: "muted", style: "font-size:13px;margin-top:10px" });
+
+  const submit = el("button", { class: "btn", onclick: async () => {
+    if (BOOK === "Combined") {
+      status.textContent = "Pick Catalin or Stefani first — Combined is a view, and a trade booked against it could land on either book's row.";
+      return;
+    }
+    const payload = {
+      ticker: ticker.value.trim().toUpperCase(), action: action.value,
+      shares: parseFloat(shares.value), price: parseFloat(price.value),
+      date: when.value, portfolio: BOOK, fee: parseFloat(fee.value) || 0,
+      note: note.value.trim(), applyToSheet: toSheet.checked,
+    };
+    if (!payload.ticker || !(payload.shares > 0)) {
+      status.textContent = "Ticker and a positive share count are required.";
+      return;
+    }
+    const verb = payload.action === "buy" ? "Buy" : "Sell";
+    const where = toSheet.checked ? " and update the Google Sheet" : " (ledger only)";
+    if (!confirm(`${verb} ${payload.shares} ${payload.ticker} at ${payload.price} on ${payload.date} for ${BOOK}${where}?`)) return;
+
+    status.textContent = "recording…";
+    submit.disabled = true;
+    try {
+      const response = await fetch("/api/transactions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || response.status);
+      status.innerHTML = result.sheet === "updated"
+        ? `Recorded, and the sheet was updated. Rebuild to see it in the charts.`
+        : result.sheet === "failed"
+          ? `Recorded in the ledger, but the sheet write failed: ${result.sheetError}. Nothing was lost — replay it once the sheet is reachable.`
+          : `Recorded in the ledger only.`;
+      shares.value = ""; price.value = ""; note.value = "";
+      renderTransactions();
+    } catch (exc) {
+      status.textContent = "Refused: " + exc.message;
+    } finally { submit.disabled = false; }
+  } }, "record");
+
+  const row = el("div", { class: "controls" },
+    action, ticker, datalist,
+    el("span", { class: "muted" }, "shares"), shares,
+    el("span", { class: "muted" }, "at"), price,
+    el("span", { class: "muted" }, "on"), when,
+    el("span", { class: "muted" }, "fee"), fee,
+    note,
+    el("label", { style: "display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0" },
+      toSheet, "also update the sheet"),
+    submit);
+
+  const box = el("div", {});
+  if (!API) {
+    box.append(el("div", { class: "warnbox" },
+      "The transaction API is not answering, so nothing can be recorded from here. " +
+      "It runs on the VPS alongside the site; locally, start it with " +
+      "AGENT_DIR=… python3 server/api.py --port 8001."));
+  } else if (!health.sheetWrites) {
+    box.append(el("div", { class: "warnbox" },
+      "The API is up but has no AGENT_DIR, so trades are recorded in the ledger " +
+      "and not mirrored to the Google Sheet."));
+  }
+  box.append(row, status);
+  return box;
+}
+
+async function renderTransactions() {
+  const box = document.getElementById("txBox");
+  box.innerHTML = "";
+  const health = await checkApi();
+  box.append(tradeForm(health));
+
+  const listBox = document.getElementById("txList");
+  listBox.innerHTML = "";
+  if (!API) {
+    listBox.append(el("p", { class: "muted" }, "No ledger available without the API."));
+    return;
+  }
+  const data = await apiGet(`/api/transactions?portfolio=${encodeURIComponent(BOOK)}`);
+  const { trades, summary } = data;
+
+  const cards = el("div", { class: "kpis", style: "margin-bottom:18px" });
+  for (const [k, v, s] of [
+    ["Trades recorded", String(summary.count), summary.first ? `since ${summary.first}` : "none yet"],
+    ["Cost of open positions", fmtEur(summary.invested), "average cost, per the ledger"],
+    ["Realised", fmtEur(summary.realised), "closed out, before tax"],
+    ["Fees paid", fmtEur(summary.fees), "as entered"],
+  ]) {
+    cards.append(el("div", { class: "kpi" }, el("div", { class: "k" }, k),
+      el("div", { class: "v" }, v), el("div", { class: "s" }, s)));
+  }
+  listBox.append(cards);
+
+  if (!trades.length) {
+    listBox.append(el("p", { class: "muted" },
+      "Nothing recorded yet. The sheet holds share counts but no history, so this ledger starts the day you log your first trade — earlier positions will show no cost basis until you backfill them."));
+    return;
+  }
+
+  listBox.append(table(["Date", "Book", "Action", "Ticker", "Shares", "Price", "Value", "Sheet", "Note"],
+    [...trades].reverse().map(t => ({
+      cells: [t.date, t.portfolio,
+        { text: t.action === "buy" ? "Bought" : "Sold", cls: t.action === "buy" ? "pos" : "neg" },
+        { node: el("span", { class: "mono" }, t.ticker) },
+        t.shares, fmtEur(t.price), fmtEur(t.shares * t.price),
+        { text: t.applied_to_sheet ? "yes" : "ledger only", cls: "muted" },
+        { text: t.note || "", cls: "muted" }],
+    })), { numFrom: 4 }));
+
+  const open = Object.values(summary.positions).filter(p => p.shares > 0);
+  if (open.length) {
+    listBox.append(el("h3", { style: "margin:22px 0 10px;font-size:14px" }, "Cost basis from the ledger"));
+    listBox.append(table(["Ticker", "Shares", "Avg cost", "Book cost", "Realised"],
+      open.map(p => ({
+        cells: [{ node: el("span", { class: "mono" }, p.ticker) }, p.shares,
+                fmtEur(p.avg_cost), fmtEur(p.cost),
+                { text: fmtEur(p.realised), cls: p.realised >= 0 ? "pos" : "neg" }],
+      })), { numFrom: 1 }));
+    listBox.append(el("p", { class: "note muted", style: "padding-top:10px" },
+      "Average cost, not FIFO. Irish CGT wants FIFO with a four-week rule, so read this as what a position cost you, not as a tax figure."));
+  }
+}
+
+/* ---------------- advice ---------------- */
+
+function renderAdvice(mine, value) {
+  const box = document.getElementById("adviceBox");
+  box.innerHTML = "";
+  const bookAdvice = view().advice;
+
+  if (bookAdvice.notes.length) {
+    const notes = el("div", { class: "panel wide", style: "margin-bottom:20px" },
+      el("h3", {}, "What stands out about the shape of this book"));
+    const body = el("div", { class: "body" });
+    const list = el("ul", { style: "margin-left:18px" });
+    for (const note of bookAdvice.notes) list.append(el("li", { style: "margin-bottom:8px" }, note));
+    body.append(list);
+    notes.append(body);
+    box.append(notes);
+  }
+
+  const sells = bookAdvice.sell;
+  const sellPanel = el("div", { class: "panel wide", style: "margin-bottom:20px" },
+    el("h3", {}, "Positions the numbers argue with"));
+  const sellBody = el("div", { class: "body" });
+  if (!sells.length) {
+    sellBody.append(el("p", { class: "muted" },
+      "Nothing flagged: no position costs materially more risk than its weight, nothing duplicates anything else above 0.85, and nothing is past the single-name cap."));
+  } else {
+    for (const row of sells) {
+      const item = el("div", { style: "padding:12px 0;border-bottom:1px solid #EFEDE9" },
+        el("div", {}, el("strong", {}, row.ticker),
+          el("span", { class: "muted" }, ` · ${row.name} · ${fmtEur(row.value)}`)));
+      const reasons = el("ul", { style: "margin:8px 0 0 18px;font-size:13.5px" });
+      for (const r of row.reasons) {
+        reasons.append(el("li", { style: "margin-bottom:4px" },
+          el("strong", {}, r.reason + ". "), r.detail));
+      }
+      item.append(reasons);
+      sellBody.append(item);
+    }
+    sellBody.append(el("p", { class: "note muted", style: "padding-top:12px" },
+      `These are mechanical consequences of the numbers, not reasons to sell. A position can cost more risk than its weight because it is the one thing actually working. You get ${bookAdvice.budgets.monthlyFreeSells} free sells a month.`));
+  }
+  sellPanel.append(sellBody);
+  box.append(sellPanel);
+
+  const buys = DATA.buyCandidates;
+  const buyPanel = el("div", { class: "panel wide", style: "margin-bottom:20px" },
+    el("h3", {}, `What would change the shape, bought at ${DATA.additions.allocation * 100}%`));
+  const buyBody = el("div", { class: "body" });
+  if (!buys.length) {
+    buyBody.append(el("p", { class: "muted" }, "No fund in the universe would materially change this book."));
+  } else {
+    buyBody.append(table(["Fund", "Asset class", "Δ vol", "Δ beta", "Corr.", "Why"],
+      buys.map(b => ({
+        cells: [b.name, { text: b.asset, cls: "muted" },
+          { text: signed(b.volChange) + "pp", cls: b.volChange < 0 ? "pos" : "neg" },
+          signed(b.betaChange), fmtNum(b.correlation),
+          { text: b.reasons.join("; "), cls: "muted" }],
+      })), { numFrom: 2 }));
+    buyBody.append(el("p", { class: "note muted", style: "padding-top:12px" },
+      `Cash budget is ${fmtEur(bookAdvice.budgets.monthlyBuyCashEur)} a month, and the single-name cap is ${bookAdvice.budgets.maxNameWeightPct}%.`));
+  }
+  buyPanel.append(buyBody);
+  box.append(buyPanel);
+
+  box.append(sizer(value));
+}
+
+/* The agent's size_position formula, run in the page. You supply the
+   conviction — the part a model was doing — and this does the arithmetic. */
+function sizer(value) {
+  const panel = el("div", { class: "panel wide" }, el("h3", {}, "Size a position"));
+  const body = el("div", { class: "body" });
+  const budgets = view().advice.budgets;
+
+  const side = el("select", {}, el("option", { value: "buy" }, "Buy"), el("option", { value: "sell" }, "Sell"));
+  const tickers = [...new Set([...holdings.map(h => h.ticker), ...DATA.funds.map(f => f.ticker)])].sort();
+  const ticker = el("select", {}, tickers.map(t => el("option", { value: t }, t)));
+  const conviction = el("input", { type: "range", min: "1", max: "10", step: "1", value: "6" });
+  const convictionLabel = el("strong", {}, "6");
+  const speculative = el("input", { type: "checkbox" });
+  const price = el("input", { type: "number", step: "any", placeholder: "price", style: "width:110px" });
+  const out = el("div", { style: "margin-top:14px" });
+
+  function recompute() {
+    convictionLabel.textContent = conviction.value;
+    const held = holdings.find(h => h.ticker === ticker.value);
+    const weight = held ? held.value / value : 0;
+    const px = parseFloat(price.value) || 0;
+    const body_ = {
+      side: side.value, conviction: parseFloat(conviction.value), price: px,
+      currentWeight: weight, positionValue: held ? held.value : 0,
+      positionShares: null, speculative: speculative.checked,
+    };
+    const r = sizeLocally(body_, budgets);
+    out.innerHTML = "";
+    const rows = side.value === "buy"
+      ? [["Suggested", fmtEur(r.euros)], ["Shares at that price", r.shares ?? "–"],
+         ["Current weight", fmtPct(r.currentWeightPct)],
+         ["Headroom to the cap", fmtNum(r.headroomFactor)],
+         ["Monthly cash budget", fmtEur(r.cashBudget)]]
+      : [["Suggested", fmtEur(r.euros)], ["Fraction of the position", fmtPct(r.trimFraction * 100)],
+         ["Position value", fmtEur(r.positionValue)],
+         ["Free sells a month", String(r.freeSellsPerMonth)]];
+    out.append(table(["", ""], rows.map(c => ({ cells: c })), { numFrom: 1 }));
+    out.append(el("p", { class: "note muted", style: "padding-top:10px" },
+      (r.flag ? r.flag + " " : "") + (r.note || "")));
+  }
+
+  [side, ticker, price, speculative].forEach(c => c.addEventListener("change", recompute));
+  conviction.addEventListener("input", recompute);
+
+  body.append(el("div", { class: "controls" },
+    side, ticker,
+    el("span", { class: "muted" }, "conviction"), conviction, convictionLabel,
+    el("span", { class: "muted" }, "price"), price,
+    el("label", { style: "display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0" },
+      speculative, "speculative")), out);
+  panel.append(body);
+  setTimeout(recompute, 0);
+  return panel;
+}
+
+/* Same arithmetic as advice.size_position, kept in the page so the slider
+   responds without a round trip. The server exposes /api/size with the
+   identical formula for anything that needs it server-side. */
+function sizeLocally(body, budgets) {
+  const cap = budgets.maxNameWeightPct / 100;
+  const fraction = Math.max(0, Math.min(1, body.conviction / 10));
+  if (body.side === "buy") {
+    const headroom = Math.max(0, Math.min(1, (cap - body.currentWeight) / cap));
+    let euros = budgets.monthlyBuyCashEur * fraction * headroom;
+    if (body.speculative) euros *= 0.5;
+    euros = Math.round(euros / 25) * 25;
+    return {
+      euros, shares: body.price ? +(euros / body.price).toFixed(2) : null,
+      currentWeightPct: body.currentWeight * 100, headroomFactor: headroom,
+      cashBudget: budgets.monthlyBuyCashEur,
+      note: (body.speculative ? "Sized at half for a speculative name. " : "") +
+            (body.currentWeight ? "Adds to an existing position." : "New position."),
+      flag: body.currentWeight && headroom < 0.15
+        ? `Already ${(body.currentWeight * 100).toFixed(1)}% of the book against a ${budgets.maxNameWeightPct}% cap — almost no room to add.`
+        : null,
+    };
+  }
+  const trim = body.conviction >= 10 ? 1 : fraction;
+  return {
+    euros: body.positionValue * trim, trimFraction: trim,
+    positionValue: body.positionValue, freeSellsPerMonth: budgets.monthlyFreeSells,
+    note: `Trims about ${(trim * 100).toFixed(0)}% of the position.`,
+  };
+}
+
+/* ---------------- pension ---------------- */
+
+/* Edited as a whole rather than as a stream of trades, because a pension
+   statement arrives as a whole picture: units and values as at a date, not
+   a running record of what you bought. Contributions are the append-only
+   half, since those genuinely are events. */
+
+async function renderPension() {
+  const box = document.getElementById("pensionBox");
+  box.innerHTML = "";
+  const health = await checkApi();
+
+  let data = DATA.pension;
+  if (API) {
+    try { data = await apiGet("/api/pension"); } catch (e) { /* keep the built copy */ }
+  } else {
+    box.append(el("div", { class: "warnbox" },
+      "The API is not answering, so this is the pot as it stood when the site was last built and nothing can be edited from here."));
+  }
+
+  const cards = el("div", { class: "kpis" });
+  for (const [k, v, s] of [
+    ["Pot value", fmtEur(data.total), data.updated ? `as entered ${data.updated.slice(0, 10)}` : "not set yet"],
+    ["Contributions logged", fmtEur(data.paidIn),
+     Object.entries(data.bySource || {}).map(([k2, v2]) => `${k2} ${fmtEur(v2)}`).join(" · ") || "none yet"],
+    ["Growth on what is logged", data.growth === null ? "–" : fmtEur(data.growth),
+     "only meaningful once the history is complete"],
+    ["Lines", `${data.holdings.length}`,
+     `${data.pricedCount} with a market ticker, ${data.unpricedCount} carried at stated value`],
+  ]) {
+    cards.append(el("div", { class: "kpi" }, el("div", { class: "k" }, k),
+      el("div", { class: "v" }, v), el("div", { class: "s" }, s)));
+  }
+  box.append(cards);
+
+  // --- holdings editor ---
+  const rows = data.holdings.map(h => ({ ...h }));
+  const panel = el("div", { class: "panel wide", style: "margin:20px 0" },
+    el("h3", {}, "What the pot holds"));
+  const body = el("div", { class: "body" });
+  const tableBox = el("div", { class: "tablewrap" });
+
+  function drawRows() {
+    tableBox.innerHTML = "";
+    const total = rows.reduce((a, r) => a + (parseFloat(r.value_eur) || 0), 0);
+    tableBox.append(table(
+      ["Fund", "Provider", "Ticker (optional)", "Units", "Value (€)", "Share", ""],
+      rows.map((r, i) => ({
+        cells: [
+          { node: el("input", { value: r.name || "", style: "width:210px",
+              oninput: e => { rows[i].name = e.target.value; } }) },
+          { node: el("input", { value: r.provider || "", style: "width:120px",
+              oninput: e => { rows[i].provider = e.target.value; } }) },
+          { node: el("input", { value: r.ticker || "", placeholder: "VWCE.DE", style: "width:100px",
+              oninput: e => { rows[i].ticker = e.target.value.toUpperCase(); } }) },
+          { node: el("input", { type: "number", step: "any", value: r.units || 0, class: "val",
+              style: "width:90px", oninput: e => { rows[i].units = parseFloat(e.target.value) || 0; } }) },
+          { node: el("input", { type: "number", step: "any", value: r.value_eur || 0, class: "val",
+              oninput: e => { rows[i].value_eur = parseFloat(e.target.value) || 0; drawRows(); } }) },
+          { text: total ? fmtPct(100 * (parseFloat(r.value_eur) || 0) / total) : "–" },
+          { node: el("button", { class: "link", onclick: () => { rows.splice(i, 1); drawRows(); } }, "remove") },
+        ],
+      })), { numFrom: 3 }));
+  }
+  drawRows();
+
+  const status = el("div", { class: "muted", style: "font-size:13px;margin-top:10px" });
+  const save = el("button", { class: "btn", onclick: async () => {
+    save.disabled = true; status.textContent = "saving…";
+    try {
+      const response = await fetch("/api/pension/holdings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holdings: rows }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || response.status);
+      status.textContent = `Saved — pot now ${fmtEur(result.total)}. Rebuild to fold it into the charts.`;
+      renderPension();
+    } catch (exc) { status.textContent = "Refused: " + exc.message; }
+    finally { save.disabled = false; }
+  } }, "save holdings");
+
+  body.append(tableBox, el("div", { class: "controls", style: "margin-top:14px" },
+    el("button", { class: "btn ghost", onclick: () => {
+      rows.push({ name: "", provider: "", ticker: "", units: 0, value_eur: 0 }); drawRows();
+    } }, "add a line"),
+    API ? save : el("span", { class: "muted" }, "read-only without the API")),
+    status,
+    el("p", { class: "note muted", style: "padding:10px 0 0" },
+      "A ticker is optional. Give one and the line is priced and risk-analysed like any other holding; leave it blank and the line is carried at the value you type, counted in the total and excluded from volatility and beta."));
+  panel.append(body);
+  box.append(panel);
+
+  // --- contributions ---
+  const contribPanel = el("div", { class: "panel wide" }, el("h3", {}, "Contributions"));
+  const contribBody = el("div", { class: "body" });
+  const when = el("input", { type: "date", value: new Date().toISOString().slice(0, 10) });
+  const amount = el("input", { type: "number", step: "any", min: "0", placeholder: "450", class: "val" });
+  const source = el("select", {}, ["employee", "employer", "avc", "transfer"].map(
+    s => el("option", { value: s }, s)));
+  const cnote = el("input", { placeholder: "note", style: "width:150px" });
+  const cstatus = el("div", { class: "muted", style: "font-size:13px;margin-top:10px" });
+
+  const addContribution = el("button", { class: "btn", onclick: async () => {
+    try {
+      const response = await fetch("/api/pension/contribution", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: when.value, amount_eur: parseFloat(amount.value),
+                               source: source.value, note: cnote.value.trim() }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || response.status);
+      amount.value = ""; cnote.value = "";
+      renderPension();
+    } catch (exc) { cstatus.textContent = "Refused: " + exc.message; }
+  } }, "add");
+
+  if (API) {
+    contribBody.append(el("div", { class: "controls" },
+      source, el("span", { class: "muted" }, "€"), amount,
+      el("span", { class: "muted" }, "on"), when, cnote, addContribution), cstatus);
+  }
+  if ((data.contributions || []).length) {
+    contribBody.append(table(["Date", "Source", "Amount", "Note"],
+      [...data.contributions].reverse().map(c => ({
+        cells: [c.date, c.source, fmtEur(c.amount_eur), { text: c.note || "", cls: "muted" }],
+      })), { numFrom: 2 }));
+  } else {
+    contribBody.append(el("p", { class: "muted", style: "margin-top:12px" },
+      "Nothing logged. Until the history is complete, treat the growth figure above as missing data rather than performance."));
+  }
+  contribPanel.append(contribBody);
+  box.append(contribPanel);
+}
