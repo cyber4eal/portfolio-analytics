@@ -232,6 +232,16 @@ def build(agent_dir: str, allocation: float = 0.10,
     TAX_HORIZON = 10.0
     tax_wrappers = wrappers if TAX_MODE == "irish" else None
 
+    # The rate used to show a US line at the price its broker quotes.
+    try:
+        import yfinance as _yf
+        _fx = _yf.download("EURUSD=X", period="5d", auto_adjust=True,
+                           progress=False)["Close"].dropna()
+        eurusd = float(_fx.iloc[-1].item() if hasattr(_fx.iloc[-1], "item")
+                       else _fx.iloc[-1])
+    except Exception:                                          # noqa: BLE001
+        eurusd = None
+
     print("Reading trend...")
     trends = optimise.trend_signals(closes)
 
@@ -332,6 +342,12 @@ def build(agent_dir: str, allocation: float = 0.10,
                 max_name_weight=advice.MAX_NAME_WEIGHT,
                 free_sells=advice.MONTHLY_FREE_SELLS,
                 goal_date=(goal or {}).get("targetDate"),
+                currencies={h.ticker: h.currency for h in all_holdings}
+                           | {f.ticker: f.currency for f in universe.UNIVERSE},
+                fx=eurusd,
+                positions={h.ticker: {"shares": h.shares, "value_eur": h.value_eur}
+                           for h in rows if h.tradable},
+                whole_shares=True,
             )
         except ValueError as exc:
             print(f"  {name}: optimisation skipped ({exc})")

@@ -95,6 +95,34 @@ UNIVERSE: tuple[Fund, ...] = (
          "iShares", "Fixed Income", "EUR", "Bloomberg Euro Government", 0.0009),
     Fund("sgln", "SGLN.L", "IE00B4ND3602", "iShares Physical Gold ETC",
          "iShares", "Commodity", "GBP", "LBMA Gold Price", 0.0012),
+    # Rivals for the same exposures, so the optimiser picks a fund on its
+    # cost and behaviour rather than on which issuer happened to be listed
+    # here. The first pass was 11 iShares out of 18, and a shortlist that
+    # lopsided produces iShares answers whatever the arithmetic says.
+    Fund("vusa", "VUSA.AS", "IE00B3XXRP09", "Vanguard S&P 500 UCITS ETF (Dist)",
+         "Vanguard", "US Equity", "EUR", "S&P 500", 0.0007),
+    Fund("lyps", "LYPS.DE", "LU0496786574", "Amundi S&P 500 UCITS ETF (Acc)",
+         "Amundi", "US Equity", "EUR", "S&P 500", 0.0005),
+    Fund("spy5", "SPY5.DE", "IE00B6YX5C33", "SPDR S&P 500 UCITS ETF (Dist)",
+         "SPDR", "US Equity", "EUR", "S&P 500", 0.0003),
+    Fund("cw8", "CW8.PA", "LU1681043599", "Amundi MSCI World UCITS ETF (Acc)",
+         "Amundi", "Global Equity", "EUR", "MSCI World", 0.0038),
+    Fund("vwrl", "VWRL.AS", "IE00B3RBWM25", "Vanguard FTSE All-World UCITS ETF (Dist)",
+         "Vanguard", "Global Equity", "EUR", "FTSE All-World", 0.0022),
+    Fund("iusq", "IUSQ.DE", "IE00B6R52259", "iShares MSCI ACWI UCITS ETF (Acc)",
+         "iShares", "Global Equity", "EUR", "MSCI ACWI", 0.0020),
+    Fund("veur", "VEUR.AS", "IE00B945VV12", "Vanguard FTSE Developed Europe UCITS ETF",
+         "Vanguard", "Europe Equity", "EUR", "FTSE Dev Europe", 0.0010),
+    Fund("vfem", "VFEM.AS", "IE00B3VVMM84", "Vanguard FTSE Emerging Markets UCITS ETF",
+         "Vanguard", "Emerging Markets", "EUR", "FTSE Emerging", 0.0022),
+    Fund("aeem", "AEEM.PA", "LU1681045370", "Amundi MSCI Emerging Markets UCITS ETF",
+         "Amundi", "Emerging Markets", "EUR", "MSCI EM", 0.0020),
+    Fund("xdew", "XDEW.DE", "IE00BLNMYC90", "Xtrackers S&P 500 Equal Weight UCITS ETF",
+         "Xtrackers", "US Equity", "EUR", "S&P 500 Equal Weight", 0.0020),
+    Fund("zprv", "ZPRV.DE", "IE00BSPLC298", "SPDR MSCI USA Small Cap Value Weighted",
+         "SPDR", "US Equity", "EUR", "MSCI USA Small Value", 0.0030),
+    Fund("spyd", "SPYD.DE", "IE00B6YX5D40", "SPDR S&P US Dividend Aristocrats UCITS ETF",
+         "SPDR", "US Equity", "EUR", "S&P High Yield Dividend Aristocrats", 0.0035),
 )
 
 BY_ID = {f.id: f for f in UNIVERSE}

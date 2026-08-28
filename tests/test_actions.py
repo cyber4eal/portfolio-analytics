@@ -114,3 +114,87 @@ def test_the_calendar_is_sorted_by_urgency():
 def test_a_bad_goal_date_is_skipped_not_crashed_on():
     rows = actions.calendar_deadlines(today=TODAY, goal_date="not-a-date")
     assert all(r["what"] != "Mortgage deposit needed" for r in rows)
+
+
+# ---------------- executable sizes ----------------
+
+POSITIONS = {"IEMG": {"shares": 38, "value_eur": 2_684.0},
+             "TSLA": {"shares": 5, "value_eur": 1_505.0}}
+
+
+def whole(**kwargs):
+    return actions.build(PLAN, PRICES, VOLS, WEIGHTS, growth_gap_pp=4.8,
+                         today=TODAY, positions=POSITIONS, whole_shares=True,
+                         **kwargs)
+
+
+def test_a_sell_is_the_whole_position():
+    """Fractions cannot be traded, so a partial trim is not an order anyone
+    can place."""
+    sell = next(o for o in whole() if o["ticker"] == "IEMG")
+    assert sell["shares"] == 38
+    assert sell["euros"] == pytest.approx(2_684.0)
+
+
+def test_a_buy_is_a_whole_number_of_shares():
+    buy = next(o for o in whole() if o["side"] == "buy")
+    assert buy["shares"] == int(buy["shares"])
+    assert buy["euros"] == pytest.approx(buy["shares"] * PRICES["CSPX.AS"], abs=0.01)
+    assert buy["euros"] <= buy["wantedEuros"] + 0.01      # never overspends
+
+
+def test_the_leftover_cash_is_stated():
+    buy = next(o for o in whole() if o["side"] == "buy")
+    assert buy["rounding"] and "cash" in buy["rounding"]
+
+
+def test_a_buy_too_small_for_one_share_is_skipped_not_faked():
+    plan = {"thisMonth": {"sells": [], "buys": [
+        {"ticker": "CSPX.AS", "euros": 300.0, "currentPct": 0, "targetPct": 5}]}}
+    out = actions.build(plan, PRICES, VOLS, {}, 4.8, today=TODAY, whole_shares=True)
+    assert out[0]["skipped"] is True
+    assert out[0]["euros"] == 0
+    assert "does not buy one share" in out[0]["rounding"]
+
+
+def test_a_big_overshoot_is_flagged_rather_than_slipped_through():
+    """Selling the lot when the plan wanted a third of it is a decision, not
+    a rounding."""
+    plan = {"thisMonth": {"sells": [
+        {"ticker": "IEMG", "euros": 800.0, "currentPct": 18.4, "targetPct": 12}], "buys": []}}
+    out = actions.build(plan, PRICES, VOLS, WEIGHTS, 4.8, today=TODAY,
+                        positions=POSITIONS, whole_shares=True)
+    assert "overshoots" in out[0]["rounding"]
+    assert out[0]["euros"] == pytest.approx(2_684.0)
+
+
+def test_skipped_orders_sort_to_the_bottom():
+    plan = {"thisMonth": {"sells": [
+        {"ticker": "IEMG", "euros": 2_684.0, "currentPct": 18.4, "targetPct": 0}],
+        "buys": [{"ticker": "CSPX.AS", "euros": 300.0, "currentPct": 0, "targetPct": 5}]}}
+    out = actions.build(plan, PRICES, VOLS, WEIGHTS, 4.8, today=TODAY,
+                        positions=POSITIONS, whole_shares=True)
+    assert out[-1]["skipped"] is True
+
+
+# ---------------- broker currency ----------------
+
+def test_a_us_line_carries_the_price_its_broker_quotes():
+    """Showing EUR 71.80 for a ticket that reads USD 83.16 is a 16% error on
+    the one number that has to be exact."""
+    out = actions.build(PLAN, PRICES, VOLS, WEIGHTS, 4.8, today=TODAY,
+                        currencies={"IEMG": "USD", "CSPX.AS": "EUR"}, fx=1.1587)
+    by_ticker = {o["ticker"]: o for o in out}
+
+    assert by_ticker["IEMG"]["currency"] == "USD"
+    assert by_ticker["IEMG"]["nativeLimit"] == pytest.approx(
+        by_ticker["IEMG"]["limit"] * 1.1587, abs=0.01)
+    assert by_ticker["IEMG"]["nativeLimit"] > by_ticker["IEMG"]["limit"]
+
+
+def test_a_euro_line_is_left_alone():
+    out = actions.build(PLAN, PRICES, VOLS, WEIGHTS, 4.8, today=TODAY,
+                        currencies={"CSPX.AS": "EUR"}, fx=1.1587)
+    buy = next(o for o in out if o["ticker"] == "CSPX.AS")
+    assert buy["nativeLimit"] == pytest.approx(buy["limit"])
+    assert buy["fx"] is None

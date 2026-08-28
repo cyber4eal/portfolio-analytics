@@ -2842,19 +2842,30 @@ function renderOrders() {
     return held ? held.name : t;
   };
 
+  const money = (value, currency) =>
+    currency === "USD" ? "$" + value.toFixed(2) : fmtEur(value);
+
   box.append(table(
-    ["When", "Order", "Holding", "Amount", "Limit", "If unfilled", "Costs to wait"],
+    ["When", "Order", "Holding", "Amount", "Limit price", "If unfilled", "Costs to wait"],
     orders.map(o => ({
+      cls: o.skipped ? "muted" : "",
       cells: [
-        { node: el("span", { class: "urg " + URGENCY_CLASS[o.urgency] }, o.urgency) },
+        { node: el("span", { class: "urg " + (o.skipped ? "urg-opp" : URGENCY_CLASS[o.urgency]) },
+            o.skipped ? "skip" : o.urgency) },
         { node: el("strong", { class: o.side === "sell" ? "neg" : "pos" },
-            `${o.side === "sell" ? "SELL" : "BUY"} ${o.shares ? fmtNum(o.shares) : ""}`) },
+            o.skipped ? "—"
+            : `${o.side === "sell" ? "SELL" : "BUY"} ${o.shares ? Math.round(o.shares) : ""}`) },
         named(o.ticker),
-        fmtEur(o.euros),
+        o.euros ? fmtEur(o.euros) : "–",
+        // The broker quotes a US line in dollars, so that is the number
+        // typed into the ticket; the euro figure is for reconciling here.
         { node: o.limit
-            ? el("span", {}, el("strong", {}, fmtEur(o.limit)),
+            ? el("span", {},
+                el("strong", {}, money(o.nativeLimit ?? o.limit, o.currency)),
                 el("div", { class: "muted", style: "font-size:11.5px" },
-                  `now ${fmtEur(o.price)} · ${o.bandPct}% band`))
+                  `now ${money(o.nativePrice ?? o.price, o.currency)}` +
+                  (o.currency === "USD" ? ` · ${fmtEur(o.limit)}` : "") +
+                  ` · ${o.bandPct}% band`))
             : el("span", { class: "muted" }, "market") },
         { text: o.deadline
             ? `${o.deadline} (${o.deadlineDays}d)`
@@ -2875,7 +2886,10 @@ function renderOrders() {
         el("span", { class: "muted" },
           ` — ${fmtEur(o.euros)}${o.shares ? `, about ${fmtNum(o.shares)} shares` : ""}`)),
       el("div", { class: "muted", style: "font-size:13px;margin-top:6px" },
-        o.limit ? `${o.side === "sell" ? "Limit sell" : "Limit buy"} at ${fmtEur(o.limit)}. ${o.rationale}` : ""),
+        o.limit ? `${o.side === "sell" ? "Limit sell" : "Limit buy"} at ` +
+          `${money(o.nativeLimit ?? o.limit, o.currency)}` +
+          (o.currency === "USD" ? ` (${fmtEur(o.limit)})` : "") + `. ${o.rationale}` : ""),
+      o.rounding ? el("div", { style: "font-size:13px;margin-top:6px;color:#B07C1F" }, o.rounding) : null,
       el("div", { class: "muted", style: "font-size:13px;margin-top:6px" }, o.deadlineReason || "")));
   }
   box.append(detail);
@@ -2894,6 +2908,12 @@ function renderOrders() {
       : "") +
     `Leaving the whole plan undone costs about <strong>${fmtEur(totalCost)} a month</strong> in foregone ` +
     `compounding — that figure, not a colour, is what "urgent" means here.<br><br>` +
+    `Sizes are whole shares and a sell is the whole position, because fractions cannot be traded in these ` +
+    `accounts. That is not a rounding detail: an instruction to trim 62% of a holding cannot be placed, so ` +
+    `the numbers here are the ones that can — with whatever they leave in cash stated on the order.<br><br>` +
+    `Prices in bold are the currency the broker quotes, which for a US line is dollars. The euro figure ` +
+    `beside it is for reconciling against the rest of this site; typing it into a dollar ticket would be a ` +
+    `16% error on the one number that has to be exact.<br><br>` +
     `Two honest limits on all of this. The limit prices assume the recent daily volatility holds, which it ` +
     `does until it does not; if a holding gaps through your limit on news, you get filled at a price the ` +
     `band never contemplated. And the destination comes from CAPM, which cannot see any edge you believe ` +

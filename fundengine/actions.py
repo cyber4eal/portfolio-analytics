@@ -113,8 +113,26 @@ def _urgency(monthly_cost: float, over_cap: bool,
 def build(plan: dict, prices: dict, vols: dict, weights: dict,
           growth_gap_pp: float, max_name_weight: float = 0.15,
           free_sells: int = 5, goal_date: str | None = None,
-          today: date | None = None) -> list[dict]:
-    """Turn the rebalance plan into dated, priced orders."""
+          today: date | None = None,
+          currencies: dict | None = None, fx: float | None = None,
+          positions: dict | None = None, whole_shares: bool = True) -> list[dict]:
+    """Turn the rebalance plan into dated, priced orders.
+
+    Prices come in as EUR, because everything else in this project is
+    measured in EUR. A limit price is different: it is typed into a broker,
+    and the broker quotes a US line in dollars. Showing EUR 71.80 for a
+    holding whose ticket reads USD 83.16 invites a 14% error on the one
+    number that has to be exact, so both are carried and the native one is
+    what the order screen shows.
+
+    `whole_shares` reflects a real constraint of the accounts: fractions
+    cannot be traded, so a sell is the whole position or nothing, and a buy
+    is a whole number of shares. This is not a rounding detail. An
+    instruction to "trim 62% of AGNC" cannot be executed, and a plan that
+    cannot be executed is worse than a blunter one that can - so the sizes
+    here are the ones you can actually place, with the weight they leave
+    behind stated rather than the weight the optimiser wanted.
+    """
     today = today or date.today()
     month_end = _month_end(today)
     orders = []
@@ -129,10 +147,56 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
     # it proportional to the money it moves.
     total = sum(t["euros"] for t in trades) or 1.0
 
+    currencies = currencies or {}
+    positions = positions or {}
     for trade in trades:
         ticker = trade["ticker"]
         price = prices.get(ticker)
         vol = vols.get(ticker, 0.0)
+        currency = currencies.get(ticker, "EUR")
+        rate = fx if (currency == "USD" and fx) else 1.0
+
+        wanted_euros = trade["euros"]
+        rounding = None
+        if whole_shares and price:
+            if trade["side"] == "sell":
+                # All or nothing: the position cannot be split.
+                held = positions.get(ticker, {})
+                shares = float(held.get("shares") or 0)
+                value = float(held.get("value_eur") or 0)
+                if shares > 0 and value > 0:
+                    if value > wanted_euros * 1.6:
+                        # Selling the lot would overshoot badly. Say so
+                        # rather than quietly trading 60% more than planned.
+                        rounding = (f"Plan wanted {wanted_euros:,.0f} but the position is "
+                                    f"{value:,.0f} and cannot be split. Selling all of it "
+                                    f"overshoots by {value - wanted_euros:,.0f} - worth doing "
+                                    f"deliberately or not at all.")
+                    trade = dict(trade, euros=value, shares=shares)
+                    if rounding is None and abs(value - wanted_euros) > 1:
+                        rounding = (f"Rounded up from {wanted_euros:,.0f} to the whole "
+                                    f"position: fractions cannot be sold.")
+            else:
+                whole = int(wanted_euros // price)
+                if whole < 1:
+                    rounding = (f"{wanted_euros:,.0f} does not buy one share at "
+                                f"{price:,.2f}. Skip it, or let the cash build.")
+                    trade = dict(trade, euros=0.0, shares=0)
+                else:
+                    spent = whole * price
+                    if abs(spent - wanted_euros) > 1:
+                        rounding = (f"{whole} whole share{'s' if whole > 1 else ''} at "
+                                    f"{price:,.2f} is {spent:,.0f}, not {wanted_euros:,.0f} - "
+                                    f"the remainder stays in cash.")
+                    trade = dict(trade, euros=spent, shares=whole)
+        if trade["euros"] <= 0 and rounding:
+            orders.append({"ticker": ticker, "side": trade["side"], "euros": 0.0,
+                           "shares": 0, "price": price, "currency": currency,
+                           "skipped": True, "rounding": rounding,
+                           "urgency": "opportunistic", "costPerMonth": 0.0,
+                           "limit": None, "deadline": None, "deadlineDays": None,
+                           "deadlineReason": "", "overCap": False})
+            continue
         share = trade["euros"] / total
         monthly_cost = cost_of_waiting(trade["euros"], growth_gap_pp * share * len(trades))
 
@@ -163,6 +227,7 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
                       f"concentration you did not choose. ") + reason
 
         days_left = (deadline - today).days if deadline else None
+        band = limit_price(price, vol, trade["side"])
         orders.append({
             "ticker": ticker,
             "side": trade["side"],
@@ -171,19 +236,27 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
             "currentPct": trade.get("currentPct"),
             "targetPct": trade.get("targetPct"),
             "price": price,
-            **limit_price(price, vol, trade["side"]),
+            "currency": currency,
+            "nativePrice": round(price * rate, 2) if price else None,
+            "fx": round(rate, 4) if rate != 1.0 else None,
+            **band,
+            "nativeLimit": round(band["limit"] * rate, 2) if band["limit"] else None,
             "deadline": deadline.isoformat() if deadline else None,
             "deadlineDays": days_left,
             "deadlineReason": reason,
             "limitExpires": expiry.isoformat(),
             "costPerMonth": round(monthly_cost, 2),
+            "rounding": rounding,
+            "wantedEuros": round(wanted_euros, 2),
+            "skipped": False,
             "urgency": _urgency(monthly_cost, over_cap, days_left),
             "overCap": over_cap,
             "trend": trade.get("vsAverage200"),
         })
 
     order = {level: i for i, level in enumerate(URGENCY)}
-    orders.sort(key=lambda o: (order[o["urgency"]], -o["costPerMonth"]))
+    orders.sort(key=lambda o: (o.get("skipped", False),
+                               order[o["urgency"]], -o["costPerMonth"]))
     return orders
 
 
