@@ -4,114 +4,335 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Fund Lab</title>
+<title>Bond — Portfolio Centre</title>
+<script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/chartjs-plugin-datalabels.min.js"></script>
+<script src="vendor/topojson.min.js"></script>
 <style>
 :root{
-  --bg:#f7f8fa; --panel:#fff; --ink:#12161f; --muted:#6b7280; --line:#e4e7ec;
-  --accent:#0f766e; --accent-soft:#e6f4f1; --pos:#0f766e; --neg:#b42318;
+  --ink:#1C1C1E; --slate:#5B5B62; --paper:#FFFFFF; --mist:#F6F5F3;
+  --line:#E6E3DE; --line-soft:#EFEDE9;
+  --accent:#0F7E82; --accent-dark:#0A5C5F; --navy:#0B1030;
+  --green:#1E7A46; --loss:#B9002F;
+  --c1:#14527A; --c2:#4A7FA5; --c3:#0F7E82; --c4:#2A9D9F; --c5:#7FB8B6;
+  --c6:#0B1030; --c7:#3A3F66; --c8:#7C7FA0; --c9:#00B2A9; --c10:#6FD5CE;
+  font-size:16px;
 }
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
-    --bg:#0d1117; --panel:#151b24; --ink:#e6edf3; --muted:#9aa4b2; --line:#242c38;
-    --accent:#2dd4bf; --accent-soft:#10312e; --pos:#2dd4bf; --neg:#f87171;
-  }
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-header{padding:28px 24px 14px;max-width:1180px;margin:0 auto}
-h1{margin:0;font-size:26px;letter-spacing:-.01em}
-.sub{color:var(--muted);font-size:13px;margin-top:4px}
-main{max-width:1180px;margin:0 auto;padding:0 24px 64px}
-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  padding:18px 20px;margin:16px 0}
-h2{margin:0 0 4px;font-size:16px;letter-spacing:-.01em}
-.hint{color:var(--muted);font-size:13px;margin:0 0 14px}
-.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
-.card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--bg)}
-.clabel{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-.cbig{font-size:22px;font-weight:600;margin-top:2px;letter-spacing:-.02em}
-.csub{color:var(--muted);font-size:12px;margin-top:2px}
-.tablewrap{overflow-x:auto}
-table.grid{width:100%;border-collapse:collapse;font-size:14px;min-width:640px}
-.grid th,.grid td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
-.grid th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
-  font-weight:600;white-space:nowrap}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  color:var(--ink);background:var(--paper);font-size:15px;line-height:1.5}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Masthead — white, with the Bond mark as a solid black square */
+.masthead{background:var(--paper);border-bottom:1px solid var(--line)}
+.masthead-inner{max-width:1240px;margin:0 auto;padding:18px 24px;display:flex;
+  align-items:center;gap:18px;flex-wrap:wrap}
+.logo-box{background:#000;color:#fff;width:74px;height:74px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:23px;font-weight:700;
+  letter-spacing:.02em;flex:0 0 auto}
+.centre-title{font-size:27px;font-weight:300;letter-spacing:-.01em}
+.centre-title strong{font-weight:700}
+.masthead .spacer{flex:1}
+.asat{font-size:12.5px;color:var(--slate);text-align:right;line-height:1.7}
+
+.ribbon{background:var(--navy);color:#fff;font-size:12.5px;padding:7px 24px;text-align:center}
+.ribbon b{color:var(--c10)}
+
+.navbar{background:var(--mist);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.navbar-inner{max-width:1240px;margin:0 auto;padding:0 24px;display:flex;gap:2px;
+  flex-wrap:wrap;overflow-x:auto}
+.navbar button{background:none;border:0;padding:14px 16px;font-size:14px;
+  color:var(--slate);border-bottom:3px solid transparent;white-space:nowrap}
+.navbar button:hover{color:var(--ink)}
+.navbar button[aria-selected="true"]{color:var(--ink);border-bottom-color:#000;font-weight:600}
+
+.wrap{max-width:1240px;margin:0 auto;padding:26px 24px 72px}
+.view{display:none}
+.view.on{display:block}
+
+.section-head{border-top:3px solid #000;background:var(--mist);padding:16px 20px;margin-bottom:20px}
+.section-head h2{font-size:21px;font-weight:600;letter-spacing:-.01em}
+.section-head p{font-size:13px;color:var(--slate);margin-top:4px;max-width:78ch}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);margin-bottom:24px}
+.kpi{background:var(--paper);padding:15px 17px}
+.kpi .k{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--slate);margin-bottom:7px}
+.kpi .v{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .s{font-size:12px;color:var(--slate);margin-top:3px}
+
+.panels{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));margin-bottom:20px}
+.panel{border:1px solid var(--line);background:var(--paper)}
+.panel h3{font-size:14px;font-weight:600;padding:13px 16px;border-bottom:1px solid var(--line-soft);
+  background:var(--mist)}
+.panel .body{padding:16px}
+.panel .note{font-size:12px;color:var(--slate);padding:0 16px 14px;margin-top:-6px}
+.chartbox{position:relative;height:280px}
+.chartbox.tall{height:360px}
+.wide{grid-column:1/-1}
+
+table.grid{width:100%;border-collapse:collapse;font-size:13.5px}
+.grid th,.grid td{padding:8px 10px;border-bottom:1px solid var(--line-soft);text-align:left}
+.grid th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--slate);
+  font-weight:600;white-space:nowrap;background:var(--mist);position:sticky;top:0}
 .grid td.num,.grid th.num{text-align:right;font-variant-numeric:tabular-nums}
-.grid tr.me{background:var(--accent-soft)}
+.grid tr.me{background:#EAF4F4}
 .grid tr.me td{font-weight:600}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
-.muted{color:var(--muted)}
-.pos{color:var(--pos)} .neg{color:var(--neg)}
-input.val{width:110px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;
-  background:var(--bg);color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
-select{padding:6px 8px;border:1px solid var(--line);border-radius:7px;
-  background:var(--bg);color:var(--ink);max-width:100%}
-.addrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
-.btn{padding:6px 12px;border:1px solid var(--accent);border-radius:7px;
-  background:var(--accent);color:#fff;cursor:pointer;font-size:14px}
-.btn.ghost{background:transparent;color:var(--accent)}
-button.link{background:none;border:0;color:var(--muted);cursor:pointer;
-  text-decoration:underline;font-size:13px;padding:0}
-.banner{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;
-  padding:9px 12px;font-size:13px;margin-bottom:12px}
-.slider{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px}
-input[type=range]{flex:1;max-width:280px;accent-color:var(--accent)}
-#caveats ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
-#caveats li{margin-bottom:8px}
-footer{max-width:1180px;margin:0 auto;padding:0 24px 48px;color:var(--muted);font-size:12px}
+.tablewrap{overflow:auto;max-height:520px}
+.tablewrap table.grid{min-width:700px}
+.grid td:first-child{min-width:190px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.muted{color:var(--slate)}
+.pos{color:var(--green)} .neg{color:var(--loss)}
+.swatch{display:inline-block;width:10px;height:10px;margin-right:7px;vertical-align:middle}
+
+input.val,input[type=number],select{padding:6px 9px;border:1px solid var(--line);
+  background:var(--paper);color:var(--ink);font:inherit;font-size:13.5px}
+input.val{width:112px;text-align:right;font-variant-numeric:tabular-nums}
+.btn{padding:7px 14px;border:1px solid #000;background:#000;color:#fff;font-size:13.5px}
+.btn.ghost{background:transparent;color:var(--ink)}
+button.link{background:none;border:0;color:var(--slate);text-decoration:underline;font-size:12.5px;padding:0}
+.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;
+  padding:13px 16px;background:var(--mist);border:1px solid var(--line);margin-bottom:20px}
+.controls label{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--slate)}
+input[type=range]{accent-color:var(--accent);width:180px;vertical-align:middle}
+.banner{background:#EAF4F4;border-left:3px solid var(--accent);padding:10px 14px;
+  font-size:13px;margin-bottom:18px}
+.warnbox{background:#FDF6E7;border-left:3px solid #B07C1F;padding:10px 14px;
+  font-size:12.5px;color:#6B5417;margin-top:12px}
+
+#mapwrap{position:relative;background:var(--mist);border:1px solid var(--line)}
+#worldmap{display:block;width:100%;height:auto}
+#worldmap path{stroke:var(--paper);stroke-width:.4;transition:opacity .12s}
+#worldmap path.hit:hover{opacity:.75;cursor:default}
+.maptip{position:absolute;pointer-events:none;background:#000;color:#fff;font-size:12px;
+  padding:5px 9px;border-radius:2px;opacity:0;transition:opacity .1s;white-space:nowrap;z-index:5}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--slate);padding:12px 16px}
+.legend i{display:inline-block;width:22px;height:10px;margin-right:5px;vertical-align:middle}
+
+#heatmap{border-collapse:collapse;font-size:11px}
+#heatmap td,#heatmap th{padding:0;text-align:center}
+#heatmap th{font-size:10px;color:var(--slate);font-weight:600;padding:3px}
+#heatmap td.cell{width:30px;height:26px;color:#fff;font-variant-numeric:tabular-nums}
+
+footer{border-top:1px solid var(--line);background:var(--mist)}
+.footer-inner{max-width:1240px;margin:0 auto;padding:22px 24px 40px;font-size:12px;color:var(--slate)}
+.footer-inner ul{margin:10px 0 0 18px}
+.footer-inner li{margin-bottom:7px}
+@media (max-width:640px){
+  .centre-title{font-size:21px}
+  .logo-box{width:58px;height:58px;font-size:18px}
+  .chartbox{height:240px}
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Fund Lab</h1>
-  <div class="sub" id="asof">loading…</div>
-  <div class="sub" id="window"></div>
-</header>
 
-<main>
-  <section>
-    <h2>Where the book stands</h2>
-    <p class="hint">Everything below is recomputed from daily returns whenever you change a holding.</p>
-    <div class="banner" id="editBanner" style="display:none">
-      Showing your edits, not the sheet. They live in this browser only — nothing is written back.
+<div class="masthead">
+  <div class="masthead-inner">
+    <span class="logo-box">Bond</span>
+    <div>
+      <div class="centre-title">Portfolio <strong>Centre</strong></div>
+      <div class="muted" style="font-size:13px" id="strapline">your book, measured against the funds you could buy instead</div>
     </div>
-    <div class="cards" id="summary"></div>
+    <span class="spacer"></span>
+    <div class="asat" id="asof">loading…</div>
+  </div>
+</div>
+<div class="ribbon">Personal research tool — <b>not investment advice</b>, and not affiliated with any fund provider.</div>
+
+<nav class="navbar"><div class="navbar-inner" id="tabs"></div></nav>
+
+<div class="wrap">
+  <div class="banner" id="editBanner" style="display:none">
+    Showing your edits, not the sheet. They live in this browser only — nothing is written back.
+  </div>
+
+  <section class="view on" id="view-overview">
+    <div class="section-head">
+      <h2>Overview</h2>
+      <p>Every number recomputes from daily returns the moment you change a holding. Volatility is EWMA-weighted, so a change in regime shows up in weeks rather than being diluted across the whole history.</p>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>Growth of €100</h3>
+        <div class="body"><div class="chartbox tall"><canvas id="chartGrowth"></canvas></div></div>
+        <p class="note" id="growthNote"></p>
+      </div>
+      <div class="panel">
+        <h3>Sector exposure</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartSector"></canvas></div></div>
+      </div>
+      <div class="panel">
+        <h3>Currency exposure</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartCurrency"></canvas></div></div>
+      </div>
+      <div class="panel">
+        <h3>Where the risk actually sits</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartRisk"></canvas></div></div>
+        <p class="note">Weight says how much you own. Risk share says how much of the book's movement each position is responsible for — they come apart fast once anything is concentrated or volatile.</p>
+      </div>
+      <div class="panel">
+        <h3>Calendar years</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartYears"></canvas></div></div>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <h2>Holdings</h2>
-    <p class="hint">Edit a value, remove a line, or add any fund from the universe. The sheet stays the source of truth — “reset to sheet” brings it back.</p>
-    <div class="tablewrap" id="holdings"></div>
+  <section class="view" id="view-holdings">
+    <div class="section-head">
+      <h2>Holdings</h2>
+      <p>Edit a value, drop a line, or add any fund from the universe. The sheet stays the source of truth — “reset to sheet” brings it back. Nothing here is written to Google.</p>
+    </div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>The book</h3>
+        <div class="body"><div class="tablewrap" id="holdings"></div></div>
+      </div>
+      <div class="panel">
+        <h3>Concentration</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartWeights"></canvas></div></div>
+        <p class="note" id="concNote"></p>
+      </div>
+      <div class="panel">
+        <h3>Correlation between your largest positions</h3>
+        <div class="body" style="overflow:auto"><div id="heatmapBox"></div></div>
+        <p class="note">Dark means the pair moves together. Two holdings above 0.85 are close to one position with two lines in the sheet.</p>
+      </div>
+      <div class="panel wide">
+        <h3>Income</h3>
+        <div class="body"><div id="incomeBox"></div></div>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <h2>Your book against the funds</h2>
-    <p class="hint">Every row is measured the same way, over the dates all of them traded. Sorted by Sharpe, your book pinned to the top.</p>
-    <div class="tablewrap" id="comparison"></div>
-  </section>
-
-  <section>
-    <h2>What buying one would do</h2>
-    <p class="hint">Each fund bought at the trial weight below, funded pro-rata from what you already hold. Negative Δ vol means the fund calms the book down.</p>
-    <div class="slider">
-      <label for="alloc">Trial weight</label>
-      <input type="range" id="alloc" min="2" max="30" step="1" value="10">
+  <section class="view" id="view-compare">
+    <div class="section-head">
+      <h2>Against the funds</h2>
+      <p>Every row measured the same way, over the dates all of them traded. Comparing a fund's five years against your book's shorter history would be two different questions printed in one table.</p>
+    </div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>Risk and return</h3>
+        <div class="body"><div class="chartbox tall"><canvas id="chartScatter"></canvas></div></div>
+        <p class="note">Up is more return, right is more risk. Anything up and to the left of your book did better for less.</p>
+      </div>
+      <div class="panel wide">
+        <h3>Comparison table</h3>
+        <div class="body"><div class="tablewrap" id="comparison"></div></div>
+      </div>
+    </div>
+    <div class="controls">
+      <label for="alloc">Buy at</label>
+      <input type="range" id="alloc" min="2" max="40" step="1" value="10">
       <strong id="allocLabel">10%</strong>
+      <span class="muted">funded pro-rata from what you already hold</span>
     </div>
-    <div class="tablewrap" id="additions"></div>
+    <div class="panels">
+      <div class="panel">
+        <h3>What buying one would do</h3>
+        <div class="body"><div class="tablewrap" id="additions"></div></div>
+      </div>
+      <div class="panel">
+        <h3>Mixing curve</h3>
+        <div class="body">
+          <div style="margin-bottom:12px">
+            <label class="muted" for="frontierFund" style="font-size:12px">Blend your book with</label><br>
+            <select id="frontierFund" style="max-width:100%;margin-top:5px"></select>
+          </div>
+          <div class="chartbox"><canvas id="chartFrontier"></canvas></div>
+        </div>
+        <p class="note">Each point is a mix, from all-book on one end to all-fund on the other. The curve bends because the two are not perfectly correlated — that bend is the diversification, and it is free.</p>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <h2>What these numbers are not</h2>
-    <div id="caveats"></div>
+  <section class="view" id="view-map">
+    <div class="section-head">
+      <h2>Where the money actually is</h2>
+      <p>Funds are exploded through their index's published country weights, so an ETF does not sit in one “Unknown” block bigger than everything else.</p>
+    </div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>Country exposure</h3>
+        <div class="body">
+          <div id="mapwrap"><svg id="worldmap" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="maptip" id="maptip"></div></div>
+          <div class="legend" id="mapLegend"></div>
+        </div>
+        <p class="note" id="mapNote"></p>
+      </div>
+      <div class="panel">
+        <h3>By country</h3>
+        <div class="body"><div class="tablewrap" id="countryTable"></div></div>
+      </div>
+      <div class="panel">
+        <h3>By sector</h3>
+        <div class="body"><div class="tablewrap" id="sectorTable"></div></div>
+      </div>
+    </div>
   </section>
-</main>
 
-<footer>
-  Personal research tool. Not investment advice, not affiliated with any fund provider or employer.
-  Fund data is NAV total return from public price history; costs and SRI ratings are absent until factsheets are parsed.
-</footer>
+  <section class="view" id="view-simulate">
+    <div class="section-head">
+      <h2>Simulate</h2>
+      <p>Six thousand paths, block-bootstrapped from the book's own daily returns so its fat tails survive into the fan rather than being smoothed into a normal curve. Sampling in 21-day blocks keeps volatility clustering intact — calm and violent stretches stay lumpy instead of averaging out.</p>
+    </div>
+    <div class="controls">
+      <label for="mcYears">Horizon</label>
+      <input type="range" id="mcYears" min="1" max="20" step="1" value="10"><strong id="mcYearsLabel">10 yrs</strong>
+      <label for="mcMonthly">Monthly top-up</label>
+      <input type="number" id="mcMonthly" value="500" step="100" min="0" style="width:110px">
+      <label for="mcDrift">Return p.a.</label>
+      <input type="number" id="mcDrift" step="0.5" style="width:90px"> %
+      <button class="btn ghost" id="mcReset">use the book's own</button>
+    </div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>Range of outcomes</h3>
+        <div class="body"><div class="chartbox tall"><canvas id="chartFan"></canvas></div></div>
+        <div class="warnbox" id="mcWarning"></div>
+      </div>
+      <div class="panel">
+        <h3>Where you land</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartBox"></canvas></div></div>
+        <p class="note">The box is the middle half of outcomes, the whiskers the 5th and 95th percentile. Read the width, not the middle.</p>
+      </div>
+      <div class="panel">
+        <h3>At the horizon</h3>
+        <div class="body"><div id="mcSummary"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-stress">
+    <div class="section-head">
+      <h2>Stress</h2>
+      <p>What actually happened, rather than what a model thinks could. Episodes appear only where your book's own history reaches them — nothing is spliced in from an index to fill a gap.</p>
+    </div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>Underwater — how far below the previous peak</h3>
+        <div class="body"><div class="chartbox tall"><canvas id="chartDrawdown"></canvas></div></div>
+      </div>
+      <div class="panel">
+        <h3>Worst and best stretches lived through</h3>
+        <div class="body"><div id="windowsBox"></div></div>
+      </div>
+      <div class="panel">
+        <h3>Episodes</h3>
+        <div class="body"><div id="episodeBox"></div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer><div class="footer-inner">
+  <strong>What these numbers are not</strong>
+  <div id="caveats"></div>
+</div></footer>
 
 <script src="app.js"></script>
 </body>

@@ -22,10 +22,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="portfolio-agent checkout holding .env and secrets/")
     parser.add_argument("--allocation", type=float, default=0.10,
                         help="trial weight when ranking funds as additions")
+    parser.add_argument("--from-csv", default=None,
+                        help="rebuild from a data/holdings.csv snapshot instead "
+                             "of the live sheet (no Google credentials needed)")
     args = parser.parse_args(argv)
 
-    payload = publish.build(args.agent_dir, allocation=args.allocation)
+    payload = publish.build(args.agent_dir, allocation=args.allocation,
+                            from_csv=args.from_csv)
     publish.write(payload)
+    publish.write_snapshot(payload)
     print(f"Done, as at {payload['asOf']}.")
     return 0
 

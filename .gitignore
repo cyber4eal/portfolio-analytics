@@ -11,3 +11,6 @@ dist/
 # Built payload carries live holdings and values - never commit it.
 site/data.json
 .cache/
+# The CSV snapshot is the same live book as data.json, in another format.
+# Force-add it deliberately if you ever want a dated copy versioned.
+data/*.csv

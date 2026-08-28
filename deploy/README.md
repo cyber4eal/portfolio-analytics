@@ -1,4 +1,4 @@
-# Deploying Fund Lab
+# Deploying the Bond Portfolio Centre
 
 One-time setup on the VPS, then `deploy.sh` for every rebuild.
 
