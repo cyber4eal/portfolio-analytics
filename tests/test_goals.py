@@ -138,23 +138,25 @@ def test_one_month_is_not_a_series_to_infer_from(tmp_path):
     summary = pension.summary(path=store, owner="Stefani")
 
     assert summary["monthsObserved"] == 1
-    assert summary["impliedMonthly"] == 0          # refuses to guess
+    assert summary["impliedMonthly"] == 0          # refuses to guess from a point
     assert summary["monthlyRate"] == pytest.approx(84)
 
 
-def test_a_real_series_with_a_gappy_log_is_inferred_from_the_pot(tmp_path):
-    """A WTW statement exports one fund at a time, so the log can explain
-    almost none of the pot. With enough months, the pot is the better guide."""
+def test_a_thin_log_is_flagged_but_never_inferred_from(tmp_path):
+    """Low coverage usually means the pot predates the log, not that
+    contributions are missing from this period. Inferring from it turns a
+    mature pot into an absurd monthly figure, so the observed rate stands
+    and the page warns instead."""
     store = tmp_path / "pension.json"
-    pension.set_holdings([{"name": "Fund", "value_eur": 6_000}], store, owner="X")
+    pension.set_holdings([{"name": "Fund", "value_eur": 200_000}], store, owner="X")
     for month in (5, 6, 7):
-        pension.add_contribution({"date": f"2026-0{month}-11", "amount_eur": 50},
+        pension.add_contribution({"date": f"2026-0{month}-11", "amount_eur": 400},
                                  store, owner="X")
     summary = pension.summary(path=store, owner="X")
 
-    assert summary["contributionCoverage"] < 50
-    assert summary["monthlyRate"] == pytest.approx(2_000)     # 6,000 over 3 months
-    assert summary["monthlyRate"] > 50                        # not the logged average
+    assert summary["contributionCoverage"] < 5        # the log explains almost none
+    assert summary["monthlyRate"] == pytest.approx(400)   # and is still what is used
+    assert summary["impliedMonthly"] > 400                # reported, not applied
 
 
 def test_a_complete_log_is_trusted_over_the_pot(tmp_path):
