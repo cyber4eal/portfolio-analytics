@@ -902,7 +902,8 @@ function renderStress(mine) {
 const TABS = [
   ["overview", "Overview"], ["holdings", "Holdings"], ["transactions", "Transactions"],
   ["advice", "Advice"], ["compare", "Against the funds"], ["map", "Map & exposure"],
-  ["simulate", "Simulate"], ["stress", "Stress"], ["pension", "Pension"],
+  ["simulate", "Simulate"], ["stress", "Stress"], ["cube", "Risk surfaces"],
+  ["pension", "Pension"],
 ];
 
 function renderTabs() {
@@ -927,6 +928,7 @@ function selectTab(id) {
   if (id === "map") renderMap();
   if (id === "transactions") renderTransactions();
   if (id === "pension") renderPension();
+  if (id === "cube") renderCube();
   if (id === "simulate") {
     const { tickers, weights, value } = currentWeights();
     runSimulation(statsFor(tickers, weights, value), value);
@@ -1482,4 +1484,267 @@ async function renderPension() {
   }
   contribPanel.append(contribBody);
   box.append(contribPanel);
+}
+
+/* ---------------- risk surfaces ---------------- */
+
+/* Two surfaces, both answering something a flat chart cannot.
+
+   The blend surface sweeps every mix of two funds and plots what it does to
+   the book, so the shape of the trade-off is visible rather than inferred
+   from a table of eighteen rows.
+
+   The correlation surface is the one worth the rotation: rolling correlation
+   of each holding to the book, through time. Diversification is not a number,
+   it is a number that moves - and it moves most at exactly the moment you
+   were relying on it. A ridge running across every holding at once is the
+   month your diversification stopped working. */
+
+let cubeScene = null;
+let cubeMode = "blend";
+
+function normalise(values) {
+  const finite = values.filter(v => isFinite(v));
+  const lo = Math.min(...finite), hi = Math.max(...finite);
+  const span = hi - lo || 1;
+  return { lo, hi, at: v => isFinite(v) ? (v - lo) / span : 0.5 };
+}
+
+const SURFACE_METRICS = {
+  vol: { label: "Volatility", get: s => s.vol, unit: "%", lowerIsBetter: true },
+  sharpe: { label: "Sharpe", get: s => s.sharpe, unit: "", lowerIsBetter: false },
+  cagr: { label: "Return p.a.", get: s => s.cagr, unit: "%", lowerIsBetter: false },
+  drawdown: { label: "Worst drawdown", get: s => s.maxDrawdown, unit: "%", lowerIsBetter: false },
+};
+
+function cubeControls() {
+  const box = document.getElementById("cubeControls");
+  box.innerHTML = "";
+
+  const modeSelect = el("select", {},
+    el("option", { value: "blend" }, "Blend surface — what two funds would do"),
+    el("option", { value: "correlation" }, "Correlation through time — when diversification failed"));
+  modeSelect.value = cubeMode;
+  modeSelect.addEventListener("change", () => { cubeMode = modeSelect.value; renderCube(); });
+  box.append(el("label", {}, "Show"), modeSelect);
+
+  if (cubeMode === "blend") {
+    const options = DATA.funds.filter(f => columnFor(f.ticker));
+    const one = el("select", { id: "cubeFundA" }, options.map(f => el("option", { value: f.ticker }, f.name)));
+    const two = el("select", { id: "cubeFundB" }, options.map(f => el("option", { value: f.ticker }, f.name)));
+    one.value = options.find(f => f.id === "aggh")?.ticker || options[0].ticker;
+    two.value = options.find(f => f.id === "sgln")?.ticker || options[1].ticker;
+    const metric = el("select", { id: "cubeSurfaceMetric" },
+      Object.entries(SURFACE_METRICS).map(([k, m]) => el("option", { value: k }, m.label)));
+    [one, two, metric].forEach(c => c.addEventListener("change", drawBlendSurface));
+    box.append(el("label", {}, "Fund A"), one, el("label", {}, "Fund B"), two,
+               el("label", {}, "Height"), metric);
+  } else {
+    const window_ = el("select", { id: "corrWindow" },
+      el("option", { value: "42" }, "2 months"),
+      el("option", { value: "63" }, "3 months"),
+      el("option", { value: "126" }, "6 months"));
+    window_.value = "63";
+    window_.addEventListener("change", drawCorrelationSurface);
+    box.append(el("label", {}, "Rolling window"), window_,
+               el("span", { class: "muted" }, "height and colour are both correlation to the rest of the book"));
+  }
+}
+
+function ensureScene() {
+  if (!cubeScene) {
+    cubeScene = new CUBE.Scene(document.getElementById("cubeCanvas"));
+    const tip = document.getElementById("cubeTip");
+    cubeScene.onHover = (point, projected) => {
+      if (!point) { tip.style.opacity = 0; return; }
+      tip.innerHTML = point.tip;
+      const box = cubeScene.canvas.getBoundingClientRect();
+      const dpr = cubeScene.canvas.width / box.width;
+      tip.style.left = (projected.sx / dpr + 14) + "px";
+      tip.style.top = (projected.sy / dpr + 10) + "px";
+      tip.style.opacity = 1;
+    };
+    window.addEventListener("resize", () => cubeScene && cubeScene.resize());
+  }
+  return cubeScene;
+}
+
+function drawBlendSurface() {
+  const { tickers, weights, value } = currentWeights();
+  const mine = statsFor(tickers, weights, value);
+  if (!mine) return;
+
+  const tickerA = document.getElementById("cubeFundA").value;
+  const tickerB = document.getElementById("cubeFundB").value;
+  const key = document.getElementById("cubeSurfaceMetric").value;
+  const metric = SURFACE_METRICS[key];
+  const steps = 11;
+  const window_ = new Set(mine.index);
+
+  const cells = [];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < steps; i++) {
+    const row = [];
+    for (let j = 0; j < steps; j++) {
+      const a = i / (steps - 1) * 0.5;
+      const b = j / (steps - 1) * 0.5;
+      const rest = 1 - a - b;
+      const mix = statsFor([...tickers, tickerA, tickerB],
+        [...weights.map(w => w * rest), a, b], value, window_);
+      const height = mix ? metric.get(mix) : NaN;
+      if (isFinite(height)) { lo = Math.min(lo, height); hi = Math.max(hi, height); }
+      row.push({ a, b, height });
+    }
+    cells.push(row);
+  }
+
+  const span = hi - lo || 1;
+  const grid = cells.map((row, i) => row.map((cell, j) => ({
+    x: i / (steps - 1),
+    y: isFinite(cell.height) ? (cell.height - lo) / span : 0,
+    z: j / (steps - 1),
+  })));
+
+  const scene = ensureScene();
+  scene.points = [];
+  // Red must mean "worse". On volatility that is the high end; on Sharpe
+  // and return it is the low end, so the ramp follows the metric rather
+  // than the raw height.
+  scene.surface = { grid, rows: steps, cols: steps, invert: metric.lowerIsBetter };
+  scene.axes = { x: tickerA + " %", y: metric.label, z: tickerB + " %" };
+  scene.ranges = { x: [0, 50], y: [lo, hi], z: [0, 50] };
+  scene.tickLabels = null;      // the other surface sets date ticks; clear them
+
+  let best = null;
+  for (const row of cells) for (const cell of row) {
+    if (!isFinite(cell.height)) continue;
+    const better = metric.lowerIsBetter ? (!best || cell.height < best.height)
+                                        : (!best || cell.height > best.height);
+    if (better) best = cell;
+  }
+  const place = (cell, colour, label, emphasis) => ({
+    x: cell.a / 0.5, y: (cell.height - lo) / span, z: cell.b / 0.5,
+    r: 0.55, colour, emphasis, label,
+    tip: `<strong>${label}</strong><br>${tickerA} ${(cell.a * 100).toFixed(0)}% · ${tickerB} ${(cell.b * 100).toFixed(0)}%` +
+         `<br>${metric.label} ${fmtNum(cell.height)}${metric.unit}`,
+  });
+  const today = cells[0][0];
+  scene.points.push(place(today, "#000", "As it stands", true));
+  if (best && (best.a || best.b)) scene.points.push(place(best, "#B9002F", "Best mix", true));
+  scene.resize();
+
+  cubeLegend(metric.label, metric.lowerIsBetter ? hi : lo, metric.lowerIsBetter ? lo : hi);
+  document.getElementById("cubeTitle").textContent =
+    `Blending your book with ${tickerA} and ${tickerB}`;
+
+  const delta = best ? best.height - today.height : 0;
+  document.getElementById("cubeNote").innerHTML =
+    `Every cell is a real mix — your book funded down pro-rata to make room, up to 50% in each fund. ` +
+    `Black dot is where you are now; red is the best cell on this metric. ` +
+    (best && Math.abs(delta) > 0.01
+      ? `<strong>${tickerA} ${(best.a * 100).toFixed(0)}% / ${tickerB} ${(best.b * 100).toFixed(0)}%</strong> takes ${metric.label.toLowerCase()} from ` +
+        `${fmtNum(today.height)}${metric.unit} to ${fmtNum(best.height)}${metric.unit}. `
+      : "") +
+    `If the surface is a broad flat basin rather than a sharp point, the decision is not delicate — anywhere in the basin does nearly the same job, so pick on cost and tax instead.`;
+}
+
+/* Rolling correlation of each holding to the rest of the book. The "rest"
+   matters: correlating a holding against a book it is 40% of mostly measures
+   it against itself. */
+function drawCorrelationSurface() {
+  const { tickers, weights, value } = currentWeights();
+  const span = parseInt(document.getElementById("corrWindow").value, 10);
+
+  const ordered = tickers
+    .map((t, i) => ({ ticker: t, weight: weights[i] }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 14);
+  const names = ordered.map(o => o.ticker);
+
+  const { rows, index } = alignedRows(names);
+  if (rows.length < span + 12) {
+    document.getElementById("cubeNote").textContent =
+      "Not enough overlapping history for a rolling window this long.";
+    return;
+  }
+
+  const steps = Math.min(46, Math.floor((rows.length - span) / 5));
+  const stride = Math.floor((rows.length - span) / steps);
+  const grid = [], labels = [], cells = [];
+
+  for (let k = 0; k <= steps; k++) {
+    const start = k * stride, end = start + span;
+    const slice = rows.slice(start, end);
+    labels.push(index[end - 1]);
+    const gridRow = [], cellRow = [];
+    for (let n = 0; n < names.length; n++) {
+      const own = slice.map(r => r[n]);
+      // Rest of the book: every other holding, reweighted to sum to one.
+      const rest = ordered.filter((_, i) => i !== n);
+      const restTotal = rest.reduce((a, o) => a + o.weight, 0) || 1;
+      const restSeries = slice.map(r =>
+        rest.reduce((a, o, i) => {
+          const column = names.indexOf(o.ticker);
+          return a + r[column] * (o.weight / restTotal);
+        }, 0));
+      const c = correlation(own, restSeries);
+      cellRow.push(c);
+      gridRow.push({ x: k / steps, y: isFinite(c) ? (c + 1) / 2 : 0.5,
+                     z: names.length > 1 ? n / (names.length - 1) : 0 });
+    }
+    grid.push(gridRow);
+    cells.push(cellRow);
+  }
+
+  const scene = ensureScene();
+  scene.points = [];
+  scene.surface = { grid, rows: grid.length, cols: names.length, invert: true };
+  scene.axes = { x: "time", y: "correlation", z: "holding" };
+  scene.ranges = { x: [0, 1], y: [-1, 1], z: [0, 1] };
+  scene.tickLabels = { x: [labels[0].slice(0, 7), labels[labels.length - 1].slice(0, 7)] };
+
+  // Mark the month where the average correlation peaked - the moment the
+  // book behaved most like a single position.
+  let worst = 0, worstAvg = -2;
+  cells.forEach((row, k) => {
+    const finite = row.filter(v => isFinite(v));
+    const avg = finite.reduce((a, b) => a + b, 0) / (finite.length || 1);
+    if (avg > worstAvg) { worstAvg = avg; worst = k; }
+  });
+  scene.points.push({
+    x: worst / steps, y: (worstAvg + 1) / 2, z: 0.5, r: 0.6,
+    colour: "#B9002F", emphasis: true, label: labels[worst].slice(0, 7),
+    tip: `<strong>${labels[worst]}</strong><br>average correlation across the book ${worstAvg.toFixed(2)}`,
+  });
+  scene.resize();
+
+  cubeLegend("correlation", -1, 1);
+  document.getElementById("cubeTitle").textContent =
+    `Rolling ${span}-day correlation of each holding to the rest of the book`;
+
+  const first = cells[0].filter(isFinite);
+  const last = cells[cells.length - 1].filter(isFinite);
+  const firstAvg = first.reduce((a, b) => a + b, 0) / (first.length || 1);
+  const lastAvg = last.reduce((a, b) => a + b, 0) / (last.length || 1);
+  document.getElementById("cubeNote").innerHTML =
+    `Each ridge running across the whole width is one holding; each slice across the depth is one date. ` +
+    `A ridge that rises everywhere at once is the book converging — the month your ${names.length} positions ` +
+    `started behaving like one. Highest average was <strong>${worstAvg.toFixed(2)} around ${labels[worst].slice(0, 7)}</strong>, ` +
+    `against ${firstAvg.toFixed(2)} at the start of the window and ${lastAvg.toFixed(2)} now. ` +
+    `Correlations measured in calm markets understate what happens in a crash, so read the peaks as the honest number.`;
+}
+
+function cubeLegend(label, lo, hi) {
+  const box = document.getElementById("cubeLegend");
+  box.innerHTML = "";
+  box.append(el("span", { class: "muted" }, label + ":"));
+  box.append(el("span", {}, fmtNum(lo)));
+  for (const colour of CUBE.RAMP) box.append(el("i", { style: `background:${colour}` }));
+  box.append(el("span", {}, fmtNum(hi)));
+  box.append(el("span", { class: "muted", style: "margin-left:14px" }, "drag to rotate · scroll to zoom"));
+}
+
+function renderCube() {
+  cubeControls();
+  if (cubeMode === "blend") drawBlendSurface(); else drawCorrelationSurface();
 }

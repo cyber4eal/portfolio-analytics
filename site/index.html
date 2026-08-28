@@ -8,6 +8,7 @@
 <script src="vendor/chart.umd.min.js"></script>
 <script src="vendor/chartjs-plugin-datalabels.min.js"></script>
 <script src="vendor/topojson.min.js"></script>
+<script src="cube.js"></script>
 <style>
 :root{
   --ink:#1C1C1E; --slate:#5B5B62; --paper:#FFFFFF; --mist:#F6F5F3;
@@ -335,6 +336,25 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <p>Mechanical consequences of the numbers, not recommendations. Every flag below is something you can check: this position contributes more risk than its weight, that pair moves together, this fund would change the shape. Whether any of it should be acted on is yours.</p>
     </div>
     <div id="adviceBox"></div>
+  </section>
+
+  <section class="view" id="view-cube">
+    <div class="section-head">
+      <h2>Risk surfaces</h2>
+      <p>Two shapes a flat chart cannot show. The blend surface sweeps every mix of two funds so you can see the whole trade-off at once instead of reading it off eighteen table rows. The correlation surface plots each holding's correlation to the rest of the book <em>through time</em> — because diversification is not a number, it is a number that moves, and it moves most at exactly the moment you were relying on it. Drag to rotate, scroll to zoom.</p>
+    </div>
+    <div class="controls" id="cubeControls"></div>
+    <div class="panel wide">
+      <h3 id="cubeTitle">Your book against the universe</h3>
+      <div class="body">
+        <div id="cubeWrap" style="position:relative">
+          <canvas id="cubeCanvas" style="width:100%;display:block"></canvas>
+          <div class="maptip" id="cubeTip"></div>
+        </div>
+        <div class="legend" id="cubeLegend"></div>
+      </div>
+      <p class="note" id="cubeNote"></p>
+    </div>
   </section>
 
   <section class="view" id="view-pension">
