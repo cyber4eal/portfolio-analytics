@@ -1705,11 +1705,35 @@ async function renderPension() {
       source, el("span", { class: "muted" }, "€"), amount,
       el("span", { class: "muted" }, "on"), when, cnote, addContribution), cstatus);
   }
-  if ((data.contributions || []).length) {
-    contribBody.append(table(["Date", "Source", "Amount", "Note"],
-      [...data.contributions].reverse().map(c => ({
-        cells: [c.date, c.source, fmtEur(c.amount_eur), { text: c.note || "", cls: "muted" }],
-      })), { numFrom: 2 }));
+  const byMonth = contributionsByMonth(data.contributions || []);
+  if (byMonth.length) {
+    contribBody.append(table(
+      ["Month", "Total in", "Split", "You", "Employer"],
+      byMonth.map(m => ({
+        cells: [
+          m.month,
+          { node: el("strong", {}, fmtEur(m.total)) },
+          { node: splitPie(m.employee, m.employer) },
+          { text: m.employee ? fmtEur(m.employee) : "–",
+            cls: m.employee ? "" : "muted" },
+          { text: m.employer ? fmtEur(m.employer) : "–",
+            cls: m.employer ? "" : "muted" },
+        ],
+      })), { numFrom: 1 }));
+
+    const totals = byMonth.reduce((a, m) => ({
+      employee: a.employee + m.employee, employer: a.employer + m.employer,
+    }), { employee: 0, employer: 0 });
+    const grand = totals.employee + totals.employer;
+    contribBody.append(el("p", { class: "note muted", style: "padding-top:12px" },
+      `${byMonth.length} month${byMonth.length === 1 ? "" : "s"} on record, ${fmtEur(grand)} in total — ` +
+      `${fmtEur(totals.employer)} of it your employer's, which is ` +
+      `${grand ? (100 * totals.employer / grand).toFixed(0) : 0}% of everything going in. ` +
+      `That share is the part of the pension worth protecting: it is pay you only receive by contributing.`));
+    const legend = el("div", { class: "pielegend" },
+      el("span", {}, el("i", { style: `background:${CONTRIB_COLOURS.employee}` }), "you"),
+      el("span", {}, el("i", { style: `background:${CONTRIB_COLOURS.employer}` }), "employer"));
+    contribBody.append(legend);
   } else {
     contribBody.append(el("p", { class: "muted", style: "margin-top:12px" },
       "Nothing logged. Until the history is complete, treat the growth figure above as missing data rather than performance."));
@@ -2635,4 +2659,76 @@ function renderGoal() {
     `20% on the day you need it is not a paper loss, it is not buying the house.`);
   box.append(el("div", { class: "warnbox", style: "margin-top:18px" },
     (() => { const d = el("div"); d.innerHTML = notes.join("<br><br>"); return d; })()));
+}
+
+/* ---------------- contribution helpers ---------------- */
+
+/* Employer and employee land as separate rows on the same day, so a raw
+   list reads as twice as many events as actually happened and the number
+   people want - what went in this month - is never shown. Grouped, the
+   answer is one row per month. */
+
+const CONTRIB_COLOURS = { employee: "#14527A", employer: "#B9002F" };
+
+function contributionsByMonth(contributions) {
+  const months = {};
+  for (const row of contributions) {
+    const key = (row.date || "").slice(0, 7);
+    if (!key) continue;
+    const month = months[key] || (months[key] = {
+      month: key, total: 0, employee: 0, employer: 0, other: 0,
+    });
+    const amount = Number(row.amount_eur) || 0;
+    month.total += amount;
+    if (row.source === "employee") month.employee += amount;
+    else if (row.source === "employer") month.employer += amount;
+    else month.other += amount;
+  }
+  return Object.values(months).sort((a, b) => b.month.localeCompare(a.month));
+}
+
+/* A two-slice pie, drawn as SVG rather than a chart instance: one Chart.js
+   object per table row would be dozens of canvases and animation loops for
+   a shape that never changes. */
+function splitPie(employee, employer, size = 26) {
+  const total = employee + employer;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+  svg.setAttribute("viewBox", "0 0 32 32");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label",
+    total ? `${Math.round(100 * employee / total)}% you, ${Math.round(100 * employer / total)}% employer`
+          : "no contributions");
+  svg.style.verticalAlign = "middle";
+
+  // A filled pie, not a ring: the stroke is drawn on a circle of radius 8
+  // and is 16 wide, so it reaches from the centre out to r=16 exactly.
+  // Drawing it on r=15.9 - the usual trick for a percentage dash array -
+  // pushed the stroke half outside the viewBox and rendered as a square.
+  const RADIUS = 8, CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+  const slice = (colour, share) => {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", 16); c.setAttribute("cy", 16); c.setAttribute("r", RADIUS);
+    c.setAttribute("fill", "none");
+    c.setAttribute("stroke", colour);
+    c.setAttribute("stroke-width", RADIUS * 2);
+    if (share !== undefined) {
+      const length = share * CIRCUMFERENCE;
+      c.setAttribute("stroke-dasharray", `${length} ${CIRCUMFERENCE - length}`);
+    }
+    c.setAttribute("transform", "rotate(-90 16 16)");
+    return c;
+  };
+
+  if (!total) {
+    svg.append(slice(cssVar("--line") || "#E6E3DE"));
+    return svg;
+  }
+  svg.append(slice(CONTRIB_COLOURS.employer));
+  const employeeShare = employee / total;
+  if (employeeShare > 0) svg.append(slice(CONTRIB_COLOURS.employee, employeeShare));
+  svg.setAttribute("title",
+    `You ${employee.toFixed(0)}, employer ${employer.toFixed(0)}`);
+  return svg;
 }
