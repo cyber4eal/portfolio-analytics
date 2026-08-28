@@ -214,7 +214,7 @@ def summary(pension: Pension | None = None, path: Path = STORE,
     for c in pension.contributions:
         by_source[c["source"]] = by_source.get(c["source"], 0) + float(c["amount_eur"] or 0)
     priced = [h for h in pension.holdings if h.get("ticker")]
-    return {
+    out = {
         "total": round(total, 2),
         "paidIn": round(paid_in, 2),
         # Only meaningful once the contribution history is complete; a pot
@@ -226,6 +226,14 @@ def summary(pension: Pension | None = None, path: Path = STORE,
         "contributions": pension.contributions,
         "contributionOverride": pension.contribution_override,
         "chargeOverride": pension.charge_override,
+        # How much of the pot the logged contributions actually explain. A
+        # WTW statement is exported one fund at a time, so a pot can be five
+        # times the contributions on record - and a projection that treats
+        # the logged amount as the whole story understates what goes in.
+        "contributionCoverage": (
+            round(100 * paid_in / total, 1) if total and paid_in else 0.0),
+        "monthsObserved": len({c["date"][:7] for c in pension.contributions}),
+        "impliedMonthly": 0.0,   # filled below once coverage is known
         "charge": (pension.charge_override
                    if pension.charge_override is not None
                    else blended_charge(pension.holdings)),
@@ -234,6 +242,9 @@ def summary(pension: Pension | None = None, path: Path = STORE,
         "unpricedCount": len(pension.holdings) - len(priced),
         "updated": pension.updated,
     }
+    out["impliedMonthly"] = implied_monthly(out)
+    out["monthlyRate"] = recent_monthly(out)
+    return out
 
 
 def as_holdings(pension: Pension | None = None, path: Path = STORE,
@@ -278,6 +289,41 @@ def set_contribution_override(amount: float | None, path: Path = STORE,
     return save(pension, owner, path)
 
 
+#: Below this, the logged contributions do not explain the pot and the
+#: observed rate is a fragment of the real one.
+COVERAGE_FLOOR = 50.0
+
+#: And below this many distinct months there is no series to infer from.
+MIN_MONTHS_TO_INFER = 3
+
+
+def implied_monthly(summary_: dict) -> float:
+    """Estimate the monthly rate from the pot rather than from the log.
+
+    A WTW statement exports one fund at a time, so a pot can be five times
+    the contributions on record. Averaging what is logged then reports a
+    fraction of what actually goes in, and a thirty-five year projection
+    built on it is wrong by that fraction compounded.
+
+    The pot over the months it has been running is the better estimate when
+    the log is that incomplete. It slightly overstates, because the pot has
+    grown as well as been paid into, but months of growth on a young pot is
+    a much smaller error than missing most of the contributions.
+    """
+    contributions = summary_.get("contributions") or []
+    total = float(summary_.get("total") or 0)
+    observed = len({c["date"][:7] for c in contributions})
+    # Fewer than three months is not a series, it is a point. Dividing the
+    # pot by one month produced a projected contribution equal to the entire
+    # pot every month - an estimate worse than the gap it was patching.
+    if not contributions or total <= 0 or observed < MIN_MONTHS_TO_INFER:
+        return 0.0
+    start = date.fromisoformat(min(c["date"] for c in contributions))
+    end = date.fromisoformat(max(c["date"] for c in contributions))
+    months = max(1, (end.year - start.year) * 12 + end.month - start.month + 1)
+    return round(total / months, 2)
+
+
 def recent_monthly(summary_: dict, months: int = 6) -> float:
     """Average monthly contribution over the last `months` of the history.
 
@@ -295,6 +341,13 @@ def recent_monthly(summary_: dict, months: int = 6) -> float:
     contributions = summary_.get("contributions") or []
     if not contributions:
         return 0.0
+    # If the log explains almost none of the pot, averaging it reports a
+    # fragment of the real contribution rate.
+    coverage = summary_.get("contributionCoverage")
+    if coverage is not None and coverage < COVERAGE_FLOOR:
+        implied = implied_monthly(summary_)
+        if implied > 0:
+            return implied
     by_month: dict[str, float] = {}
     for row in contributions:
         key = row["date"][:7]

@@ -1110,8 +1110,15 @@ function selectBook(name) {
   const start = document.getElementById("mcStart");
   if (start) start.value = Math.round(currentWeights().value);
   renderAll();
-  if (document.getElementById("view-map").classList.contains("on")) renderMap();
-  if (document.getElementById("view-transactions").classList.contains("on")) renderTransactions();
+  // Every view that depends on which book you are looking at has to be told.
+  // The map and transactions were wired and the goal and pension were not,
+  // so those two silently kept showing the previous book's numbers.
+  const on = id => document.getElementById("view-" + id).classList.contains("on");
+  if (on("map")) renderMap();
+  if (on("transactions")) renderTransactions();
+  if (on("goal")) renderGoal();
+  if (on("pension")) renderPension();
+  if (on("cube")) renderCube();
 }
 
 function renderCaveats() {
@@ -1552,28 +1559,48 @@ async function renderPension() {
 
   const pots = DATA.pension || {};
   const people = Object.keys(pots);
-  if (!PENSION_OWNER || !pots[PENSION_OWNER]) PENSION_OWNER = people[0];
+  // One switcher, at the top. A second one here asked the reader to hold two
+  // ideas of "whose" at once, and they could disagree.
+  PENSION_OWNER = pots[BOOK] ? BOOK : (BOOK === "Combined" ? "Combined" : people[0]);
 
   const picker = document.getElementById("pensionOwner");
   picker.innerHTML = "";
-  if (people.length > 1) {
-    picker.append(el("label", {}, "Whose pension"));
-    const select = el("select", {}, people.map(p => el("option", { value: p }, p)));
-    select.value = PENSION_OWNER;
-    select.addEventListener("change", e => { PENSION_OWNER = e.target.value; renderPension(); });
-    picker.append(select);
+  if (BOOK === "Combined" && people.length > 1) {
+    picker.append(el("span", { class: "muted" },
+      `Both pots together — ${people.join(" and ")}. Switch book at the top to see one.`));
+  } else if (!pots[BOOK]) {
+    picker.append(el("span", { class: "muted" },
+      `No pension statement imported for ${BOOK}; showing ${PENSION_OWNER}.`));
   }
 
-  let data = pots[PENSION_OWNER] || {};
+  let data = BOOK === "Combined" && people.length > 1
+    ? combinePots(pots) : (pots[PENSION_OWNER] || {});
   if (API) {
-    try { data = await apiGet(`/api/pension?owner=${encodeURIComponent(PENSION_OWNER)}`); }
-    catch (e) { /* keep the built copy */ }
+    if (BOOK !== "Combined") {
+      try { data = await apiGet(`/api/pension?owner=${encodeURIComponent(PENSION_OWNER)}`); }
+      catch (e) { /* keep the built copy */ }
+    }
   } else {
     box.append(el("div", { class: "warnbox" },
       "The API is not answering, so this is the pot as it stood when the site was last built and nothing can be edited from here."));
   }
 
   if (data.accrualNote) box.append(el("div", { class: "warnbox" }, data.accrualNote));
+  // A WTW statement exports one fund at a time, so the log can explain
+  // almost none of the pot - and the contribution rate is read off that log.
+  if (data.contributionCoverage !== undefined && data.contributionCoverage < 50
+      && data.total > 0) {
+    const box_ = el("div", { class: "warnbox" });
+    box_.innerHTML =
+      `<strong>The contribution history here is partial.</strong> ${fmtEur(data.paidIn)} is logged against ` +
+      `a ${fmtEur(data.total)} pot — ${data.contributionCoverage}% — because a WTW statement exports one ` +
+      `fund at a time and only ${data.monthsObserved} month${data.monthsObserved === 1 ? " has" : "s have"} ` +
+      `been imported. The projection assumes ${fmtEur(data.monthlyRate)} goes in every month, which is what ` +
+      `the log shows and is very likely too low. Export the other fund views, or just type the real monthly ` +
+      `figure in the box below — that single number moves the thirty-five year outcome more than anything ` +
+      `else on this page.`;
+    box.append(box_);
+  }
   const cards = el("div", { class: "kpis" });
   for (const [k, v, s] of [
     ["Pot value", fmtEur(data.estimatedTotal ?? data.total),
@@ -1993,6 +2020,47 @@ function cubeLegend(label, lo, hi) {
 function renderCube() {
   cubeControls();
   if (cubeMode === "blend") drawBlendSurface(); else drawCorrelationSurface();
+}
+
+/* Both pots as one. The projection is rerun in the page rather than summed
+   from the two, because adding two medians is not the median of the sum -
+   the pots do not have their bad years at the same time. */
+function combinePots(pots) {
+  const people = Object.keys(pots);
+  const total = people.reduce((a, p) => a + (pots[p].total || 0), 0);
+  const holdings = [];
+  const contributions = [];
+  for (const person of people) {
+    for (const h of pots[person].holdings || []) {
+      holdings.push({ ...h, name: `${h.name} (${person})` });
+    }
+    for (const c of pots[person].contributions || []) {
+      contributions.push({ ...c, note: `${person}: ${c.note || ""}` });
+    }
+  }
+  contributions.sort((a, b) => a.date.localeCompare(b.date));
+  const weighted = total
+    ? people.reduce((a, p) => a + (pots[p].charge || 0) * (pots[p].total || 0), 0) / total
+    : 0.015;
+  return {
+    owner: "Combined",
+    total,
+    estimatedTotal: people.reduce((a, p) => a + (pots[p].estimatedTotal ?? pots[p].total ?? 0), 0),
+    paidIn: people.reduce((a, p) => a + (pots[p].paidIn || 0), 0),
+    monthlyRate: people.reduce((a, p) => a + (pots[p].monthlyRate || 0), 0),
+    monthlyContribution: people.reduce((a, p) => a + (pots[p].monthlyContribution || 0), 0),
+    charge: weighted,
+    beta: total ? people.reduce((a, p) => a + (pots[p].beta || 1) * (pots[p].total || 0), 0) / total : 1,
+    holdings, contributions,
+    bySource: people.reduce((acc, p) => {
+      for (const [k, v] of Object.entries(pots[p].bySource || {})) acc[k] = (acc[k] || 0) + v;
+      return acc;
+    }, {}),
+    pricedCount: people.reduce((a, p) => a + (pots[p].pricedCount || 0), 0),
+    unpricedCount: people.reduce((a, p) => a + (pots[p].unpricedCount || 0), 0),
+    accruedMonths: 0, accrued: 0,
+    combinedFrom: people,
+  };
 }
 
 /* ---------------- pension charts ---------------- */
@@ -2498,9 +2566,19 @@ function renderGoal() {
     return;
   }
 
+  // The target is a household one - a house is bought once - but the money
+  // sits in two books, so the switcher decides whose share is shown while
+  // the goal itself stays the household's.
+  const showing = BOOK === "Combined" ? null : BOOK;
+  const lines = showing ? goal.lines.filter(l => l.book === showing) : goal.lines;
+  const thisBook = lines.reduce((a, l) => a + l.value, 0);
+
   const cards = el("div", { class: "kpis" });
   for (const [k, v, s] of [
-    ["Saved", fmtEur(goal.held), `${goal.pct}% of ${fmtEur(goal.target)}`],
+    showing
+      ? [`${showing} holds`, fmtEur(thisBook),
+         `of ${fmtEur(goal.held)} saved between you`]
+      : ["Saved", fmtEur(goal.held), `${goal.pct}% of ${fmtEur(goal.target)}`],
     ["Still to find", fmtEur(goal.gap),
      goal.monthsRemaining !== null ? `over ${goal.monthsRemaining} months` : ""],
     ["Needed each month", goal.requiredMonthly === null ? "–" : fmtEur(goal.requiredMonthly),
@@ -2525,7 +2603,10 @@ function renderGoal() {
     el("h3", {}, "Where the deposit is"));
   const body = el("div", { class: "body" });
   body.append(table(["Book", "Account", "Amount"],
-    goal.lines.map(l => ({ cells: [l.book, l.name, fmtEur(l.value)] })), { numFrom: 2 }));
+    goal.lines.map(l => ({
+      cls: showing && l.book === showing ? "me" : "",
+      cells: [l.book, l.name, fmtEur(l.value)],
+    })), { numFrom: 2 }));
   panel.append(body);
   box.append(panel);
 
@@ -2543,6 +2624,11 @@ function renderGoal() {
     : `${fmtEur(goal.requiredMonthly)} a month is required and ${fmtEur(goal.monthlyContribution)} is planned, ` +
       `a shortfall of ${fmtEur(goal.shortfallMonthly)} a month. Either the date moves, the target moves, or ` +
       `the monthly amount does.`);
+  if (showing) {
+    notes.push(`You are looking at ${showing}'s book, so the highlighted row is ${showing}'s ` +
+      `${fmtEur(thisBook)} of it. The target is a household one — a house is bought once — so the ` +
+      `progress bar and the monthly figure stay whole rather than being split in two.`);
+  }
   notes.push(`This money is deliberately excluded from every portfolio weight, risk figure and rebalance ` +
     `suggestion on the rest of the site. A deposit needed in ${goal.monthsRemaining} months has no business ` +
     `in equities: the horizon is far too short for volatility to average out, and the cost of being down ` +

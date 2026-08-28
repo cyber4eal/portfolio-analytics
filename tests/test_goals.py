@@ -125,3 +125,59 @@ def test_a_charge_given_as_a_percent_is_refused(tmp_path):
     """1.5 would be 150% a year - the field wants a fraction."""
     with pytest.raises(ValueError, match="fraction"):
         pension.set_charge_override(1.5, tmp_path / "p.json", owner="Catalin")
+
+
+def test_one_month_is_not_a_series_to_infer_from(tmp_path):
+    """Regression: dividing the pot by a single logged month projected a
+    monthly contribution equal to the whole pot - an estimate far worse
+    than the gap it was patching."""
+    store = tmp_path / "pension.json"
+    pension.set_holdings([{"name": "Fund", "value_eur": 1_133}], store, owner="Stefani")
+    pension.add_contribution({"date": "2026-05-11", "amount_eur": 84,
+                              "source": "employer"}, store, owner="Stefani")
+    summary = pension.summary(path=store, owner="Stefani")
+
+    assert summary["monthsObserved"] == 1
+    assert summary["impliedMonthly"] == 0          # refuses to guess
+    assert summary["monthlyRate"] == pytest.approx(84)
+
+
+def test_a_real_series_with_a_gappy_log_is_inferred_from_the_pot(tmp_path):
+    """A WTW statement exports one fund at a time, so the log can explain
+    almost none of the pot. With enough months, the pot is the better guide."""
+    store = tmp_path / "pension.json"
+    pension.set_holdings([{"name": "Fund", "value_eur": 6_000}], store, owner="X")
+    for month in (5, 6, 7):
+        pension.add_contribution({"date": f"2026-0{month}-11", "amount_eur": 50},
+                                 store, owner="X")
+    summary = pension.summary(path=store, owner="X")
+
+    assert summary["contributionCoverage"] < 50
+    assert summary["monthlyRate"] == pytest.approx(2_000)     # 6,000 over 3 months
+    assert summary["monthlyRate"] > 50                        # not the logged average
+
+
+def test_a_complete_log_is_trusted_over_the_pot(tmp_path):
+    store = tmp_path / "pension.json"
+    pension.set_holdings([{"name": "Fund", "value_eur": 1_200}], store, owner="Y")
+    for month in (5, 6, 7):
+        pension.add_contribution({"date": f"2026-0{month}-11", "amount_eur": 400},
+                                 store, owner="Y")
+    summary = pension.summary(path=store, owner="Y")
+
+    assert summary["contributionCoverage"] == pytest.approx(100)
+    assert summary["monthlyRate"] == pytest.approx(400)
+
+
+def test_contributions_keep_accruing_between_statements(tmp_path):
+    """The ask: assume they land every month, as they do in practice."""
+    from datetime import date
+    store = tmp_path / "pension.json"
+    pension.set_holdings([{"name": "Fund", "value_eur": 1_133}], store, owner="Stefani")
+    pension.add_contribution({"date": "2026-05-11", "amount_eur": 84}, store, owner="Stefani")
+
+    accrued = pension.accrue(pension.summary(path=store, owner="Stefani"),
+                             as_of=date(2026, 8, 28))
+    assert accrued["accruedMonths"] == 3
+    assert accrued["accrued"] == pytest.approx(252)
+    assert accrued["estimatedTotal"] == pytest.approx(1_385)
