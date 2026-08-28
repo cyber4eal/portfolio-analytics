@@ -29,6 +29,13 @@ import pandas as pd
 
 #: Broker symbol -> Yahoo line, only where they differ.
 TICKER_OVERRIDES = {
+    # Corrected in the sheet on 2026-08-29. It was labelled IEMG - the
+    # US-listed iShares Core MSCI EM IMI at about USD 82 - while the trades
+    # behind it were for the EUR-quoted UCITS accumulating line at about
+    # EUR 56, overstating the position by roughly EUR 550. Google Finance
+    # does not carry the Xetra line (EUNM), so the sheet now uses the
+    # Amsterdam listing, which it does.
+    "AMS:IEMA": "IEMA.AS",
     "SPYL": "SPYL.DE",   # SPDR S&P 500 UCITS, Xetra line, already EUR
     "RHM": "RHM.DE",     # Rheinmetall, Xetra
     "VUAA": "VUAA.DE",   # Vanguard S&P 500 UCITS Acc, Xetra
@@ -236,3 +243,69 @@ def to_eur(closes: pd.DataFrame, holdings: list[Holding]) -> pd.DataFrame:
         rate = fx[pairs[ccy]].reindex(converted.index).ffill()
         converted[ticker] = converted[ticker] * rate
     return converted
+
+
+def apply_ledger(holdings: list, positions: dict, closes,
+                 tolerance: float = 0.01) -> tuple:
+    """Reprice from the market, and report where the statements disagree.
+
+    It is tempting to let the statements simply overwrite the share count,
+    and that was the first version. It is wrong, because the ledger is not
+    complete - it covers the brokers whose statements import, and one of
+    them exports a PDF whose numbers cannot be read. An incomplete ledger
+    disagrees with the sheet in both directions at once:
+
+      NVDA   sheet 9, ledger 5  - four shares at a broker not imported
+      APLD   sheet 46, ledger 26 - twenty at the same missing broker
+      AGNC   sheet 21.67, ledger 23.67 - the sheet missed a recent buy
+      RR     sheet 71, ledger 76 - a sale the statements do not cover
+
+    Overwriting from the ledger would have restored five RR shares that
+    were sold and removed twenty APLD that are held. So share counts are
+    left alone and the disagreement is reported instead, with what each
+    direction implies. Repricing is safe and is still done: the price of an
+    instrument does not depend on how many of it you own.
+    """
+    corrections = []
+    out = []
+    for holding in holdings:
+        row = positions.get(holding.ticker)
+        if not holding.tradable or not row or row.get("shares") is None:
+            out.append(holding)
+            continue
+
+        ledger_shares = float(row["shares"])
+        price = None
+        if closes is not None and holding.ticker in closes.columns:
+            series = closes[holding.ticker].dropna()
+            if len(series):
+                price = float(series.iloc[-1])
+
+        # The sheet's share count stands. Only the price is refreshed.
+        new_value = (holding.shares * price) if price else holding.value_eur
+        gap = ledger_shares - holding.shares
+
+        if abs(gap) > tolerance:
+            corrections.append({
+                "ticker": holding.ticker,
+                "reason": ("statements show more - a sale they do not cover, "
+                           "or a sheet not yet updated"
+                           if gap > 0 else
+                           "statements show fewer - bought at a broker whose "
+                           "statement has not been imported"),
+                "sheetShares": round(holding.shares, 4),
+                "ledgerShares": round(ledger_shares, 4),
+                "gap": round(gap, 4),
+                "valueAtStake": round(abs(gap) * (price or 0), 2),
+                "sheetValue": round(holding.value_eur, 2),
+                "newValue": round(new_value, 2),
+                "resolved": False,
+            })
+
+        out.append(Holding(
+            holding.symbol, holding.ticker, holding.name, holding.shares,
+            round(new_value, 2), holding.currency, holding.tradable,
+            holding.portfolio,
+        ))
+
+    return out, corrections

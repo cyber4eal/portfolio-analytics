@@ -183,3 +183,41 @@ def test_contributions_keep_accruing_between_statements(tmp_path):
     assert accrued["accruedMonths"] == 3
     assert accrued["accrued"] == pytest.approx(252)
     assert accrued["estimatedTotal"] == pytest.approx(1_385)
+
+
+# ---------------- reconciliation safety ----------------
+
+def test_share_counts_are_never_overwritten_from_an_incomplete_ledger():
+    """The ledger covers the brokers whose statements import, and one
+    exports an unreadable PDF. It disagrees with the sheet in both
+    directions, so overwriting either way corrupts the book: it would
+    restore five RR shares that were sold and delete twenty APLD that are
+    held."""
+    from fundengine.portfolio import Holding, apply_ledger
+
+    holdings = [
+        Holding("RR", "RR", "Rolls-Royce", 71, 112.14, "USD", True, "Catalin"),
+        Holding("APLD", "APLD", "Applied Digital", 46, 1006.06, "USD", True, "Catalin"),
+    ]
+    positions = {"RR": {"shares": 76.0}, "APLD": {"shares": 26.0}}
+    out, fixes = apply_ledger(holdings, positions, None)
+
+    assert [h.shares for h in out] == [71, 46]        # untouched
+    assert {f["ticker"] for f in fixes} == {"RR", "APLD"}
+    assert next(f for f in fixes if f["ticker"] == "RR")["gap"] == pytest.approx(5)
+    assert next(f for f in fixes if f["ticker"] == "APLD")["gap"] == pytest.approx(-20)
+
+
+def test_a_matching_position_raises_nothing():
+    from fundengine.portfolio import Holding, apply_ledger
+    holdings = [Holding("AMZN", "AMZN", "Amazon", 8, 1839.65, "USD", True, "Catalin")]
+    out, fixes = apply_ledger(holdings, {"AMZN": {"shares": 8.0}}, None)
+    assert fixes == []
+    assert out[0].shares == 8
+
+
+def test_a_holding_with_no_statement_is_left_entirely_alone():
+    from fundengine.portfolio import Holding, apply_ledger
+    holdings = [Holding("RIVN", "RIVN", "Rivian", 33, 457.71, "USD", True, "Catalin")]
+    out, fixes = apply_ledger(holdings, {}, None)
+    assert fixes == [] and out[0].shares == 33 and out[0].value_eur == 457.71

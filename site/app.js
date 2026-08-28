@@ -1083,7 +1083,9 @@ function renderDerived() {
   renderAdditions(tickers, weights, value, mine);
   renderFrontier();
   renderStress(mine);
+  renderDiscrepancies();
   renderOrders();
+  renderAudit();
   renderDeadlines();
   renderLevers();
   renderMilestones();
@@ -2948,4 +2950,116 @@ function renderDeadlines() {
         { text: r.why, cls: "muted" },
       ],
     })), { numFrom: 1 }));
+}
+
+/* ---------------- why these funds ---------------- */
+
+/* The shortlist is written by hand, and a hand-written shortlist is where
+   bias enters - the first version was eleven iShares out of eighteen and
+   duly recommended iShares. Showing the inputs makes that checkable rather
+   than something to be taken on faith. */
+
+function renderAudit() {
+  const audit = (view().optimisation || {}).audit || [];
+  const box = document.getElementById("auditTable");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!audit.length) return;
+
+  const funds = Object.fromEntries(DATA.funds.map(f => [f.ticker, f]));
+  box.append(table(
+    ["Fund", "Issuer", "Target", "Expected return", "Ongoing charge", "Volatility", "Corr. to book"],
+    audit.map(r => {
+      const fund = funds[r.ticker] || {};
+      return { cells: [
+        fund.name || r.ticker,
+        { text: fund.issuer || "already held", cls: "muted" },
+        fmtPct1(r.weight),
+        fmtPct(r.expectedReturn),
+        { text: r.cost ? r.cost.toFixed(3) + "%" : "0%",
+          cls: r.cost > 0.25 ? "neg" : "muted" },
+        fmtPct(r.vol),
+        r.correlationToBook === null ? "–" : fmtNum(r.correlationToBook),
+      ] };
+    }), { numFrom: 2 }));
+
+  const byIssuer = {};
+  for (const r of audit) {
+    const issuer = (funds[r.ticker] || {}).issuer || "already held";
+    byIssuer[issuer] = (byIssuer[issuer] || 0) + r.weight;
+  }
+  const mix = Object.entries(byIssuer).sort((a, b) => b[1] - a[1])
+    .map(([issuer, weight]) => `${issuer} ${weight.toFixed(0)}%`).join(", ");
+
+  document.getElementById("auditNote").innerHTML =
+    `<strong>No provider pays for placement here, and none could.</strong> The selection is a function of four ` +
+    `numbers per fund — expected return from its beta, its ongoing charge, its volatility, and its correlation ` +
+    `to what you already hold. Current mix: ${mix}.<br><br>` +
+    `The place bias actually got in was the shortlist, which is written by hand. The first version was eleven ` +
+    `iShares funds out of eighteen and unsurprisingly recommended iShares. Twelve rivals for the same ` +
+    `exposures were added and the answer changed on its own — Amundi's S&P 500 at 0.05% and SPDR's at 0.03% ` +
+    `displaced the iShares line that had been winning. If a provider you rate is missing from the ` +
+    `${DATA.funds.length}-fund list, say so: an absent fund cannot be chosen, and that is the failure mode to ` +
+    `watch for rather than a thumb on the scale.<br><br>` +
+    `Two things worth checking yourself. Ongoing charges are hand-entered from published KIDs, so a wrong one ` +
+    `moves the ranking — the numbers above are the ones to verify. And expected returns come from CAPM, which ` +
+    `pays for beta and nothing else: that is why a technology sector fund lands at 25%, and it is a property ` +
+    `of the model rather than a judgement that technology will keep winning.`;
+}
+
+/* ---------------- unreconciled positions ---------------- */
+
+/* The share counts the sheet reports and the ones the statements account
+   for do not always agree, and they disagree in both directions - which is
+   why neither source can simply overwrite the other. An order sized off a
+   count that has not been reconciled is the most expensive mistake this
+   page can make, so it is shown above the orders rather than below them. */
+
+function renderDiscrepancies() {
+  const rows = DATA.corrections || [];
+  const panel = document.getElementById("discrepancyPanel");
+  const box = document.getElementById("discrepancyTable");
+  if (!panel || !box) return;
+
+  if (!rows.length) {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "";
+  box.innerHTML = "";
+
+  box.append(table(
+    ["Holding", "Sheet says", "Statements account for", "Gap", "Value at stake", "Most likely"],
+    rows.map(r => ({
+      cells: [
+        { node: el("strong", {}, r.ticker) },
+        fmtNum(r.sheetShares),
+        fmtNum(r.ledgerShares),
+        { text: (r.gap > 0 ? "+" : "") + fmtNum(r.gap), cls: "neg" },
+        fmtEur(r.valueAtStake),
+        { text: r.reason, cls: "muted" },
+      ],
+    })), { numFrom: 1 }));
+
+  const missing = rows.filter(r => r.gap < 0);
+  const extra = rows.filter(r => r.gap > 0);
+  const atStake = rows.reduce((a, r) => a + r.valueAtStake, 0);
+
+  document.getElementById("discrepancyNote").innerHTML =
+    `<strong>${rows.length} position${rows.length === 1 ? "" : "s"} where the sheet and the statements ` +
+    `disagree, ${fmtEur(atStake)} at stake.</strong> Neither source overwrites the other, because they ` +
+    `disagree in both directions and so neither is reliably right.<br><br>` +
+    (missing.length
+      ? `<strong>${missing.map(r => r.ticker).join(", ")}</strong>: the sheet holds more than the imported ` +
+        `statements account for, which points at a broker whose statement has not been loaded. The ` +
+        `Trading 212 export is a PDF whose numbers cannot be extracted — its CSV export would close this.<br><br>`
+      : "") +
+    (extra.length
+      ? `<strong>${extra.map(r => r.ticker).join(", ")}</strong>: the statements account for more than the ` +
+        `sheet holds, which is either a sale the statements do not cover or a sheet not yet updated for a ` +
+        `recent buy. Those need opposite corrections, so they have to be looked at rather than guessed.<br><br>`
+      : "") +
+    `Share counts here come from the sheet. Prices are refreshed from the market, which is safe — what an ` +
+    `instrument is worth does not depend on how many of it you own. An order sized off an unreconciled count ` +
+    `is the one error on this page that costs real money, so resolve these before placing anything in them.`;
 }

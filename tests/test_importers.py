@@ -46,7 +46,12 @@ def test_dividends_are_not_trades(tmp_path):
 def test_broker_symbols_map_to_the_tickers_this_project_uses():
     # T212 lists Airbus on a European line; the sheet holds the ADR.
     assert importers._map_symbol("AIR1") == "EADSY"
-    assert importers._map_symbol("EUNM") == "IEMG"
+    # EUNM is the EUR-quoted UCITS line at ~EUR 56, not the US-listed IEMG
+    # at ~USD 82. Mapping one to the other valued the position 27% too high
+    # while the share count still reconciled, which is why it went unseen.
+    # The Amsterdam listing is used because Google Finance carries it and
+    # does not carry the Xetra one.
+    assert importers._map_symbol("EUNM") == "IEMA.AS"
     # Davy contract notes describe the instrument rather than ticker it.
     assert importers._map_symbol("PALANTIR TECH INC COM USD0.001 CLASS A") == "PLTR"
     assert importers._map_symbol("BYD COMPANY LTD 'H'CNY1") == "BYDDY"

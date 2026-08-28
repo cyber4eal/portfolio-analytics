@@ -6,14 +6,20 @@ series possible.
 
 Three formats were offered and two are usable:
 
-  * Trading 212 CSV - a clean transaction export, fractional shares, prices
-    in the instrument's currency with an FX rate alongside.
+  * Revolut CSV - a clean transaction export, fractional shares, prices in
+    the instrument's currency with an FX rate alongside. Identified by its
+    columns: Date, Ticker, Type, Quantity, Price per share, Total Amount,
+    Currency, FX Rate, with CASH TOP-UP and BUY - MARKET as type strings.
+    Trading 212's own export looks nothing like this - it leads with
+    Action, Time, ISIN and "No. of shares" - so the two are told apart by
+    their header rather than by which file the user reached for.
   * Davy .xls - an OLE2 workbook, one row per contract note, prices in the
     instrument's currency and the debit in EUR.
   * Trading 212 PDF - unusable. Its embedded font carries no ToUnicode map
     for digits, so every number extracts as a null byte; the customer name
-    comes out as "C t lin Bond ri". Nothing can be recovered from it, and it
-    covers the same account as the CSV anyway.
+    comes out as "C t lin Bond ri". It is a separate account from the CSV -
+    its open positions are AEM, APLD and SPCX, which is precisely the set
+    that has no ledger history - so nothing here covers those holdings.
 
 Symbols are mapped explicitly. A broker's ticker is not always a Yahoo line
 and is not always the line the sheet uses - guessing silently is how a trade
@@ -38,7 +44,12 @@ SYMBOL_MAP = {
     "ARR": "ARR", "XOM": "XOM", "APLD": "APLD", "NNE": "NNE",
     "AMD": "AMD", "MSTR": "MSTR", "RR": "RR", "HUMA": "HUMA",
     "AIR1": "EADSY",     # Airbus: T212's European line, the sheet holds the ADR
-    "EUNM": "IEMG",      # iShares MSCI EM: the sheet holds the US-listed line
+    # EUNM is the Xetra-listed iShares MSCI EM UCITS ETF (Acc), about
+    # EUR 55. It was mapped to IEMG, the US-listed iShares Core MSCI EM IMI
+    # at about USD 82 - a different fund on a different exchange in a
+    # different currency. The share count matched, so the reconciliation
+    # looked clean while the position was valued 27% too high.
+    "EUNM": "IEMA.AS",
     "GOOGL": "GOOGL", "ANET": "ANET", "AVGO": "AVGO",
     "VUAA": "VUAA.DE",   # Vanguard S&P 500 Acc, Xetra line
     "RHM": "RHM.DE",     # Rheinmetall, Xetra
@@ -100,12 +111,31 @@ def _map_symbol(raw: str) -> str | None:
     return None
 
 
-def trading212_csv(path: str | Path, portfolio: str) -> ImportResult:
-    """Parse a Trading 212 transaction export."""
+#: Header signatures, so a file is identified by what it is rather than by
+#: what it was assumed to be. Sixty-five trades were once attributed to the
+#: wrong broker because both exports happen to be called "CSV".
+REVOLUT_COLUMNS = {"Date", "Ticker", "Type", "Quantity", "Price per share"}
+TRADING212_COLUMNS = {"Action", "Time", "No. of shares"}
+
+
+def detect_csv_source(header: list[str]) -> str:
+    columns = set(header or [])
+    if TRADING212_COLUMNS & columns:
+        return "Trading 212"
+    if REVOLUT_COLUMNS <= columns:
+        return "Revolut"
+    return "Unknown broker"
+
+
+def revolut_csv(path: str | Path, portfolio: str) -> ImportResult:
+    """Parse a Revolut (or similarly shaped) transaction export."""
     trades, skipped, unmapped = [], [], []
+    source = "Revolut"
 
     with Path(path).open(newline="", encoding="utf-8-sig") as handle:
-        for row in csv.DictReader(handle):
+        reader = csv.DictReader(handle)
+        source = detect_csv_source(reader.fieldnames or [])
+        for row in reader:
             kind = (row.get("Type") or "").strip().upper()
             symbol = (row.get("Ticker") or "").strip()
 
@@ -135,10 +165,10 @@ def trading212_csv(path: str | Path, portfolio: str) -> ImportResult:
                 currency=_currency(price_field) or (row.get("Currency") or "EUR").strip(),
                 date=(row.get("Date") or "")[:10],
                 portfolio=portfolio,
-                note=f"Trading 212 {kind.lower()}",
+                note=f"{source} {kind.lower()}",
             ))
 
-    return ImportResult(trades, skipped, unmapped, "Trading 212 CSV")
+    return ImportResult(trades, skipped, unmapped, f"{source} CSV")
 
 
 def davy_xls(path: str | Path, portfolio: str) -> ImportResult:
@@ -227,7 +257,7 @@ def detect(path: str | Path, portfolio: str) -> ImportResult:
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        return trading212_csv(path, portfolio)
+        return revolut_csv(path, portfolio)
     if suffix in (".xls", ".xlsx"):
         return davy_xls(path, portfolio)
     if suffix == ".pdf":
@@ -371,3 +401,7 @@ def wtw_pension_pdf(path: str | Path) -> dict:
             "owner": owner, "scheme": next(
                 (l for l in lines if "Pension Scheme" in l), ""),
             "source": Path(path).name}
+
+
+#: Old name, kept so anything calling it still works.
+trading212_csv = revolut_csv

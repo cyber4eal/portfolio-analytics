@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-TRADING212, DAVY = "Trading 212", "Davy"
+TRADING212, DAVY, REVOLUT = "Trading 212", "Davy", "Revolut"
 
 
 @dataclass(frozen=True)
@@ -42,10 +42,22 @@ class Broker:
 
 
 BROKERS = {
+    REVOLUT: Broker(REVOLUT, True, 0.0, 0.0, 0.005,
+                    "Free trades within the monthly plan allowance, then a small "
+                    "per-trade fee; conversion is the real cost. Fractions allowed."),
     TRADING212: Broker(TRADING212, True, 0.0, 0.0, 0.0015,
                        "No commission; 0.15% on currency conversion. Fractions allowed."),
     DAVY: Broker(DAVY, False, 0.005, 14.99, 0.0,
                  "Commission with a floor, so small trades are expensive. Whole shares only."),
+}
+
+#: Holdings whose account is known but has no importable statement. The
+#: Trading 212 PDF lists these as open positions and cannot be parsed, so
+#: the location is recorded here rather than left unknown.
+KNOWN_LOCATION = {
+    "AEM": TRADING212,
+    "APLD": TRADING212,
+    "SPCX": TRADING212,
 }
 
 
@@ -63,6 +75,7 @@ def locate(trades: list[dict], portfolio: str | None = None) -> dict:
             continue
         note = (trade.get("note") or "").lower()
         broker = (DAVY if "davy" in note
+                  else REVOLUT if "revolut" in note
                   else TRADING212 if "trading 212" in note or "t212" in note
                   else None)
         if not broker:
@@ -83,24 +96,48 @@ def cost_at(broker: str, euros: float, currency: str) -> float:
     return round(commission + fx, 2)
 
 
-def route_buy(euros: float, currency: str) -> dict:
-    """Cheapest venue for a purchase, with both costs shown.
+#: Which venues plausibly list what. European UCITS ETFs on Xetra and
+#: Euronext are a Trading 212 and Davy thing; Revolut's range is mostly
+#: US-listed. This decides ties and raises a flag, it does not claim to be
+#: a product list - availability changes and is worth confirming in the app
+#: before placing anything.
+EUROPEAN_LINES = (".DE", ".AS", ".PA", ".MI", ".L", ".SW")
+UNLIKELY_AT = {REVOLUT: EUROPEAN_LINES}
 
-    Almost always the commission-free account, and by a wide margin on the
-    sizes traded here - a floor of EUR 14.99 is simply larger than 0.15% of
-    anything under EUR 10,000.
+
+def lists_it(broker: str, ticker: str) -> bool:
+    suffixes = UNLIKELY_AT.get(broker)
+    return not (suffixes and ticker.endswith(suffixes))
+
+
+def route_buy(euros: float, currency: str, ticker: str = "") -> dict:
+    """Cheapest venue that plausibly lists it, with the costs shown.
+
+    Cost decides, but only among venues that carry the instrument. Routing
+    a Xetra UCITS line to an account whose range is mostly US-listed is a
+    cheaper trade that cannot be placed, which is not cheaper at all.
+
+    Ties are broken on conversion cost, since a tie on this trade says
+    nothing about the next one.
     """
     options = [{"broker": name, "cost": cost_at(name, euros, currency),
-                "note": BROKERS[name].note}
+                "note": BROKERS[name].note,
+                "lists": lists_it(name, ticker) if ticker else True,
+                "fxPct": BROKERS[name].fx_pct}
                for name in BROKERS]
-    options.sort(key=lambda o: o["cost"])
-    best, worst = options[0], options[-1]
+    options.sort(key=lambda o: (not o["lists"], o["cost"], o["fxPct"]))
+    best = options[0]
+    worst = max(options, key=lambda o: o["cost"])
+    excluded = [o["broker"] for o in options if not o["lists"]]
     return {
         "broker": best["broker"],
         "cost": best["cost"],
         "options": options,
+        "excluded": excluded,
         "saving": round(worst["cost"] - best["cost"], 2),
         "why": (
+            (f"{', '.join(excluded)} is unlikely to list a {ticker} line, so it is "
+             f"out regardless of cost. " if excluded else "") +
             f"{best['broker']} costs {best['cost']:.2f} against {worst['cost']:.2f} at "
             f"{worst['broker']}"
             + (f", because a EUR {BROKERS[worst['broker']].commission_min:.2f} minimum "
@@ -119,11 +156,25 @@ def route_sell(ticker: str, euros: float, location: dict,
     """Where the shares are, and therefore where the sell has to happen."""
     where = location.get(ticker, {})
     if not where:
+        # The Trading 212 statement cannot be parsed, but it does list its
+        # open positions, so those are recorded rather than reported as
+        # unknown. Everything else genuinely is unknown and says so.
+        known = KNOWN_LOCATION.get(ticker)
+        if known:
+            return {
+                "broker": known,
+                "split": [{"broker": known, "shares": None, "share": 100.0,
+                           "fractional": BROKERS[known].fractional}],
+                "why": (f"Held at {known}. Its statement is a PDF whose numbers "
+                        f"cannot be extracted, so the share count here comes from "
+                        f"the sheet rather than from an imported trade - check it "
+                        f"against the app before selling."),
+            }
         return {
             "broker": None,
             "split": [],
             "why": (f"No imported history for {ticker}, so where it is held is not "
-                    f"known. Import the statement covering it, or check both "
+                    f"known. Import the statement covering it, or check all three "
                     f"accounts before placing anything."),
         }
 

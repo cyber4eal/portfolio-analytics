@@ -166,7 +166,7 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
         # are; a buy should go wherever it is cheapest.
         routing = (_brokers.route_sell(ticker, wanted_euros, location, price)
                    if trade["side"] == "sell"
-                   else _brokers.route_buy(wanted_euros, currency))
+                   else _brokers.route_buy(wanted_euros, currency, ticker))
         # Trading 212's own history shows fractional fills, so the venue
         # can do them - but Catalin has said these accounts cannot, and a
         # stated constraint beats an inferred capability. `whole_shares`

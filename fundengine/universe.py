@@ -153,6 +153,8 @@ def tickers() -> list[str]:
 HELD_FUND_TERS = {
     "SPYL.DE": 0.0003,   # SSGA SPDR S&P 500 UCITS ETF (Acc) - the benchmark
     "VUAA.DE": 0.0007,   # Vanguard S&P 500 UCITS ETF (Acc)
+    "IEMA.AS": 0.0018,   # iShares MSCI EM UCITS ETF (Acc), Amsterdam
+    "EUNM.DE": 0.0018,   # the same fund, Xetra line
     "IEMG": 0.0009,      # iShares Core MSCI EM IMI, US-listed line
     "XDEW.DE": 0.0020,   # Xtrackers S&P 500 Equal Weight
     "CSPX.AS": 0.0007,

@@ -230,9 +230,18 @@ def test_a_split_position_is_two_orders():
 
 def test_a_holding_with_no_history_says_so_rather_than_guessing():
     from fundengine import brokers
-    routed = brokers.route_sell("AEM", 350, brokers.locate(LEDGER, "Catalin"))
+    routed = brokers.route_sell("RIVN", 450, brokers.locate(LEDGER, "Catalin"))
     assert routed["broker"] is None
     assert "not" in routed["why"] and "known" in routed["why"]
+
+
+def test_a_position_from_the_unparseable_statement_is_still_located():
+    """The Trading 212 PDF's numbers cannot be extracted, but it does name
+    its open positions, so those are recorded rather than called unknown."""
+    from fundengine import brokers
+    routed = brokers.route_sell("AEM", 350, brokers.locate(LEDGER, "Catalin"))
+    assert routed["broker"] == brokers.TRADING212
+    assert "cannot be extracted" in routed["why"]
 
 
 def test_a_buy_goes_to_the_cheaper_venue():

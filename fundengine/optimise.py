@@ -309,6 +309,27 @@ def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
             "fee": round(fee * 100, 3),
             "weights": weights_out,
         }
+    # Why each selected fund is there, so the choice can be checked rather
+    # than trusted. Every input that moved it is listed.
+    chosen = out["theories"]["growth"]["weights"]
+    audit = []
+    for ticker, weight in sorted(chosen.items(), key=lambda kv: -kv[1]):
+        if ticker not in names:
+            continue
+        i = names.index(ticker)
+        audit.append({
+            "ticker": ticker,
+            "weight": weight,
+            "expectedReturn": round(float(mu[i]) * 100, 2),
+            "vol": round(float(np.sqrt(sigma[i, i])) * 100, 2),
+            "cost": round((costs or {}).get(ticker, 0.0) * 100, 3),
+            "correlationToBook": round(float(
+                sigma[i] @ current / (np.sqrt(sigma[i, i]) *
+                                      np.sqrt(current @ sigma @ current))), 3)
+            if current.sum() else None,
+        })
+    out["audit"] = audit
+
     baseline = out["theories"]["current"]["growth"]
     for key, block in out["theories"].items():
         block["growthGain"] = round(block["growth"] - baseline, 2)

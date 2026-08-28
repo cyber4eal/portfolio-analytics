@@ -69,6 +69,8 @@ def build(agent_dir: str, allocation: float = 0.10,
     weights = book.weights(holdings)
     tradable_value = sum(h.value_eur for h in holdings if h.tradable)
 
+    all_trades = ledger.read_all()
+
     print("Fetching prices...")
     # Every book's tickers, not just the active one: the per-book views and
     # the pension all need price history, and a ticker missing from the
@@ -125,7 +127,6 @@ def build(agent_dir: str, allocation: float = 0.10,
     income = profile.income(holding_dicts, profiles)
 
     print("Projecting the pensions...")
-    all_trades = ledger.read_all()
 
     for owner, pot in pension_pots.items():
         _project_pension(pot, closes, benchmark)
@@ -241,6 +242,28 @@ def build(agent_dir: str, allocation: float = 0.10,
                        else _fx.iloc[-1])
     except Exception:                                          # noqa: BLE001
         eurusd = None
+
+    # The statements are what the broker actually did; the sheet is typed.
+    # Where they disagree, the statements win.
+    ledger_positions = {}
+    for owner in {h.portfolio for h in all_holdings}:
+        ledger_positions.update({
+            (owner, ticker): row
+            for ticker, row in ledger.positions(all_trades, owner).items()})
+    corrections = []
+    corrected = []
+    for holding in all_holdings:
+        row = ledger_positions.get((holding.portfolio, holding.ticker))
+        one, fixes = book.apply_ledger([holding], {holding.ticker: row} if row else {},
+                                       closes)
+        corrected.extend(one)
+        corrections.extend(fixes)
+    all_holdings = corrected
+    if corrections:
+        print(f"  statements corrected {len(corrections)} holding(s):")
+        for fix in corrections:
+            print(f"    {fix['ticker']:9} {fix['reason']:26} "
+                  f"EUR {fix['sheetValue']:>9,.2f} -> {fix['newValue']:>9,.2f}")
 
     print("Reading trend...")
     trends = optimise.trend_signals(closes)
@@ -428,6 +451,7 @@ def build(agent_dir: str, allocation: float = 0.10,
             for target in (100_000.0, 250_000.0, 1_000_000.0)
         ],
         "wrappers": wrappers,
+        "corrections": corrections,
         "brokers": {n: {"fractional": b.fractional, "note": b.note}
                     for n, b in brokers.BROKERS.items()},
         "taxMode": TAX_MODE,
