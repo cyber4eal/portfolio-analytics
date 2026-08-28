@@ -310,10 +310,21 @@ function renderGrowth(mine) {
     label: "My book", data: levelCurve(mine.series), borderColor: INK(),
     borderWidth: 2.4, pointRadius: 0, tension: .18, order: 0,
   }];
+  // The benchmark first, always: it is the line the book is measured
+  // against everywhere else, and leaving it off the one chart people
+  // actually look at made the comparison invisible.
+  const benchStats = statsFor([DATA.benchmarkTicker], [1], 1, window_);
+  if (benchStats) {
+    datasets.push({
+      label: `${DATA.benchmarkTicker} (benchmark)`, data: levelCurve(benchStats.series),
+      borderColor: "#B9002F", borderWidth: 1.8, borderDash: [6, 3],
+      pointRadius: 0, tension: .18, order: 1,
+    });
+  }
   const picks = ["iwda", "cspx", "aggh", "sgln"];
   picks.forEach((id, i) => {
     const fund = DATA.funds.find(f => f.id === id);
-    if (!fund) return;
+    if (!fund || fund.ticker === DATA.benchmarkTicker) return;
     const s = statsFor([fund.ticker], [1], 1, window_);
     if (!s) return;
     datasets.push({
@@ -339,7 +350,10 @@ function renderGrowth(mine) {
     },
   });
   document.getElementById("growthNote").textContent =
-    `€100 invested on ${mine.from}, rebased. All lines share the book's window (${(mine.days / TRADING_DAYS).toFixed(1)} years) — the shortest holding decides how far back the comparison can honestly go.`;
+    `€100 invested on ${mine.from}, rebased. All lines share the book's window ` +
+    `(${(mine.days / TRADING_DAYS).toFixed(1)} years) — the shortest holding decides how far back the ` +
+    `comparison can honestly go. Every fund line is already net of its own ongoing charge: the fee comes ` +
+    `out of NAV daily, so these are what a holder actually received, not what the fund earned before paying itself.`;
 }
 
 function donut(id, entries, note) {
@@ -2232,7 +2246,9 @@ function renderTheories() {
       cells: [
         { node: el("span", {}, el("strong", {}, THEORY_LABELS[key][0]),
             el("div", { class: "muted", style: "font-size:12px" }, THEORY_LABELS[key][1])) },
-        fmtPct(t.expectedReturn), fmtPct(t.vol),
+        fmtPct(t.expectedReturn),
+        { text: t.fee ? t.fee.toFixed(3) + "%" : "0%", cls: "muted" },
+        fmtPct(t.vol),
         { text: "−" + fmtPct(t.drag), cls: "muted" },
         { text: fmtPct(t.growth), cls: key === "current" ? "" : (t.growthGain > 0 ? "pos" : "neg") },
         { text: key === "current" ? "—" : signed(t.growthGain) + "pp",
@@ -2241,8 +2257,8 @@ function renderTheories() {
       ],
     };
   });
-  box.append(table(["Theory", "Expected return", "Volatility", "Drag", "Compounds at",
-                    "vs today", "Mostly"], rows, { numFrom: 1 }));
+  box.append(table(["Theory", "Expected return", "Ongoing charge", "Volatility", "Drag",
+                    "Compounds at", "vs today", "Mostly"], rows, { numFrom: 1 }));
 
   // What the difference is actually worth over time.
   const current = opt.theories.current, best = opt.theories.growth;
@@ -2388,9 +2404,23 @@ function renderPlan() {
 
   // Tax is usually the biggest number nobody models.
   const tax = plan.tax || {};
+  const cost = plan.tradingCost || {};
   const growthGain = view().optimisation.theories.growth.growthGain;
   const annual = view().priced * growthGain / 100;
   const parts = [];
+
+  if (cost.total !== undefined) {
+    const worst = cost.worst;
+    parts.push(`<strong>Dealing costs.</strong> This month's ${cost.trades.length} trades cost about ` +
+      `${fmtEur(cost.total)} in commission and currency conversion` +
+      (worst ? `, and the burden is uneven — ${worst.ticker} at ${fmtEur(worst.euros)} pays ` +
+        `${fmtNum(worst.costPct)}% of the trade just to be executed. Small trades are where a minimum ` +
+        `commission does the damage; batching them into fewer, larger ones is worth more than getting ` +
+        `the allocation exactly right.` : ".") +
+      ` That assumes ${(cost.assumptions.commission_pct * 100).toFixed(2)}% commission with a ` +
+      `${fmtEur(cost.assumptions.commission_min)} minimum and ${(cost.assumptions.fx_pct * 100).toFixed(2)}% ` +
+      `on currency — adjust if your rate differs.`);
+  }
   if (tax.tax > 0) {
     const payback = tax.tax / Math.max(annual, 1);
     parts.push(`<strong>Tax first.</strong> These sells realise ${fmtEur(tax.gain)} of gains. After the ` +
@@ -2408,7 +2438,13 @@ function renderPlan() {
     parts.push(`No cost basis imported for ${tax.unknownBasis.map(r => r.ticker).join(", ")}, so their gains are ` +
       `not in that figure. Import the statement covering them before relying on the tax number.`);
   }
-  parts.push(`This is an estimate on average cost. Irish CGT is FIFO with a four-week rule on losses, so the ` +
+  const switchCost = (cost.total || 0) + (tax.tax || 0);
+  if (annual > 0) {
+    parts.push(`<strong>All in: ${fmtEur(switchCost)} to switch</strong>, against roughly ${fmtEur(annual)} a year ` +
+      `of extra compounding — about ${(switchCost / annual).toFixed(2)} years to pay back. ` +
+      `That is the number to judge this on, not the headline improvement.`);
+  }
+  parts.push(`Tax is estimated on average cost. Irish CGT is FIFO with a four-week rule on losses, so the ` +
     `real figure will differ — treat it as the order of magnitude, not the return.`);
   taxBox.innerHTML = parts.join("<br><br>");
 }

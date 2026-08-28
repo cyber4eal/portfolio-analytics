@@ -189,6 +189,11 @@ def build(agent_dir: str, allocation: float = 0.10,
     # writer then serialises the column label where a number should be.
     matrix = matrix.loc[:, ~matrix.columns.duplicated()]
 
+    # Directly-held shares carry no ongoing charge; funds do, and a forward
+    # estimate that ignores it favours funds for no reason.
+    fund_costs = universe.costs_by_ticker(
+        [h.ticker for h in all_holdings if h.tradable])
+
     print("Reading trend...")
     trends = optimise.trend_signals(closes)
 
@@ -240,10 +245,10 @@ def build(agent_dir: str, allocation: float = 0.10,
             view_series = series
             book_views[name]["optimisation"] = optimise.build(
                 holding_returns.reindex(columns=view_tickers), view_weights,
-                benchmark, candidates=fund_returns, cap=0.25)
+                benchmark, candidates=fund_returns, cap=0.25, costs=fund_costs)
             book_views[name]["hedges"] = optimise.hedges(
                 holding_returns.reindex(columns=view_tickers), view_weights,
-                fund_returns, benchmark, view_series)
+                fund_returns, benchmark, view_series, costs=fund_costs)
             book_views[name]["stressCorrelation"] = optimise.stress_correlation(
                 pd.concat([holding_returns.reindex(columns=view_tickers),
                            fund_returns], axis=1), view_series)
@@ -266,6 +271,9 @@ def build(agent_dir: str, allocation: float = 0.10,
                 all_trades, None if name in (book.COMBINED, pension.BOOK) else name)
             book_views[name]["plan"]["tax"] = optimise.tax_on_plan(
                 book_views[name]["plan"]["sells"], view_rows, basis)
+            month = book_views[name]["plan"]["thisMonth"]
+            book_views[name]["plan"]["tradingCost"] = optimise.trading_cost(
+                month["sells"] + month["buys"], view_rows)
         except ValueError as exc:
             print(f"  {name}: optimisation skipped ({exc})")
             book_views[name]["optimisation"] = None
@@ -318,6 +326,7 @@ def build(agent_dir: str, allocation: float = 0.10,
         "lines": [line.as_dict() for line in lines],
         "additions": {"allocation": allocation, "ranked": additions},
         "trends": trends,
+        "fundCosts": fund_costs,
         "buyCandidates": advice.buy_candidates(
             additions, [f.as_dict() for f in universe.UNIVERSE], exposure, allocation),
         "ledger": ledger.summary(ledger.read_all()),

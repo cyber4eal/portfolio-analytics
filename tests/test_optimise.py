@@ -278,3 +278,70 @@ def test_a_position_with_no_basis_is_reported_not_assumed_free():
 
     assert tax["gain"] == 0
     assert [r["ticker"] for r in tax["unknownBasis"]] == ["RIVN"]
+
+
+# ---------------- fees ----------------
+
+def test_charges_are_subtracted_from_the_forward_estimate(market):
+    """A CAPM estimate knows beta and nothing else, so without this an
+    expensive fund is credited with the same net return as a cheap one at
+    the same beta - and a directly-held share with the same again."""
+    frame, benchmark = market
+    gross = optimise.capm_returns(frame, benchmark)
+    net = optimise.capm_returns(frame, benchmark, costs={"BETA_MID": 0.0065})
+
+    assert net["BETA_MID"] == pytest.approx(gross["BETA_MID"] - 0.0065)
+    assert net["BETA_HIGH"] == pytest.approx(gross["BETA_HIGH"])
+
+
+def test_the_cheaper_of_two_identical_funds_wins(rng, dates):
+    """Same exposure, different charge: the optimiser must prefer the cheap
+    one, which is the whole point of netting the fee."""
+    factor = rng.normal(0.0004, 0.012, len(dates))
+    frame = pd.DataFrame({
+        "CHEAP": factor + rng.normal(0, 0.001, len(dates)),
+        "PRICEY": factor + rng.normal(0, 0.001, len(dates)),
+    }, index=dates)
+    benchmark = pd.Series(factor, index=dates)
+    weights = pd.Series([0.5, 0.5], index=frame.columns)
+
+    result = optimise.build(frame, weights, benchmark, cap=1.0,
+                            costs={"CHEAP": 0.0007, "PRICEY": 0.0065})
+    growth = result["theories"]["growth"]["weights"]
+    assert growth.get("CHEAP", 0) > growth.get("PRICEY", 0)
+
+
+def test_the_blended_charge_is_reported(market):
+    frame, benchmark = market
+    weights = pd.Series(0.25, index=frame.columns)
+    costs = {t: 0.002 for t in frame.columns}
+    theories = optimise.build(frame, weights, benchmark, costs=costs)["theories"]
+    for block in theories.values():
+        assert block["fee"] == pytest.approx(0.2, abs=0.01)     # 0.2% of the mix
+
+
+def test_a_minimum_commission_punishes_small_trades():
+    """The total looks tolerable; the small trades inside it do not."""
+    trades = [{"ticker": "BIG", "action": "buy", "euros": 5000.0},
+              {"ticker": "SMALL", "action": "buy", "euros": 356.0}]
+    holdings = [{"ticker": "BIG", "currency": "EUR"},
+                {"ticker": "SMALL", "currency": "EUR"}]
+    cost = optimise.trading_cost(trades, holdings)
+
+    by_ticker = {r["ticker"]: r for r in cost["trades"]}
+    assert by_ticker["SMALL"]["cost"] == pytest.approx(14.99)   # the floor bites
+    assert by_ticker["SMALL"]["costPct"] > 4
+    assert by_ticker["BIG"]["costPct"] < 1
+    assert cost["worst"]["ticker"] == "SMALL"
+
+
+def test_currency_conversion_is_only_charged_on_non_euro():
+    trades = [{"ticker": "USD_LINE", "action": "sell", "euros": 10_000.0},
+              {"ticker": "EUR_LINE", "action": "sell", "euros": 10_000.0}]
+    holdings = [{"ticker": "USD_LINE", "currency": "USD"},
+                {"ticker": "EUR_LINE", "currency": "EUR"}]
+    by_ticker = {r["ticker"]: r for r in
+                 optimise.trading_cost(trades, holdings)["trades"]}
+
+    assert by_ticker["USD_LINE"]["cost"] > by_ticker["EUR_LINE"]["cost"]
+    assert by_ticker["USD_LINE"]["cost"] - by_ticker["EUR_LINE"]["cost"] == pytest.approx(15.0)

@@ -66,8 +66,23 @@ def shrink_covariance(sample: np.ndarray, intensity: float = 0.3) -> np.ndarray:
     return (1 - intensity) * sample + intensity * target
 
 
-def capm_returns(returns: pd.DataFrame, benchmark: pd.Series) -> pd.Series:
-    """Expected return per asset from its beta to the benchmark."""
+def capm_returns(returns: pd.DataFrame, benchmark: pd.Series,
+                 costs: dict[str, float] | None = None) -> pd.Series:
+    """Expected return per asset from its beta to the benchmark, net of fees.
+
+    The netting matters and is easy to get wrong in both directions.
+
+    A fund's *historical* line is already net: the ongoing charge comes out
+    of NAV daily, so every past number on this site is what a holder
+    actually received, and subtracting the fee again would double-count it.
+
+    A *forward* CAPM estimate is gross. It knows the asset's beta and
+    nothing else, so left alone it credits a 0.65% thematic fund with the
+    same net return as a 0.07% index fund at the same beta. That is not a
+    rounding error in an optimiser deciding what to hold for a decade: it
+    systematically favours funds over directly-held shares, which carry no
+    ongoing charge at all. So the charge is subtracted here, once.
+    """
     aligned = pd.concat([returns, benchmark.rename("__b__")], axis=1,
                         join="inner").dropna()
     market = aligned["__b__"].to_numpy()
@@ -76,7 +91,8 @@ def capm_returns(returns: pd.DataFrame, benchmark: pd.Series) -> pd.Series:
     for column in returns.columns:
         series = aligned[column].to_numpy()
         beta = float(np.cov(series, market, ddof=1)[0, 1] / variance) if variance else 1.0
-        out[column] = RISK_FREE + max(-0.5, beta) * EQUITY_RISK_PREMIUM
+        gross = RISK_FREE + max(-0.5, beta) * EQUITY_RISK_PREMIUM
+        out[column] = gross - (costs or {}).get(column, 0.0)
     return pd.Series(out)
 
 
@@ -231,8 +247,14 @@ def describe(w: np.ndarray, mu: np.ndarray, sigma: np.ndarray) -> dict:
 
 
 def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
-          candidates: pd.DataFrame | None = None, cap: float = 0.25) -> dict:
-    """Run every theory over the holdings, optionally plus candidate funds."""
+          candidates: pd.DataFrame | None = None, cap: float = 0.25,
+          costs: dict[str, float] | None = None) -> dict:
+    """Run every theory over the holdings, optionally plus candidate funds.
+
+    `costs` is the annual ongoing charge per ticker, subtracted from each
+    forward expected return so the comparison is on what reaches your pocket
+    rather than on what the fund earns before paying itself.
+    """
     columns = [c for c in returns.columns if c in weights.index]
     frame = returns[columns]
     if candidates is not None and not candidates.empty:
@@ -242,7 +264,7 @@ def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
 
     names = list(aligned.columns)
     sigma = shrink_covariance(ewma_cov(aligned).to_numpy())
-    mu = capm_returns(aligned, benchmark).reindex(names).to_numpy()
+    mu = capm_returns(aligned, benchmark, costs).reindex(names).to_numpy()
 
     current = np.array([weights.get(name, 0.0) for name in names], dtype=float)
     if current.sum() <= 0:
@@ -257,13 +279,19 @@ def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
         "parity": risk_parity(sigma, cap),
     }
 
-    out = {"tickers": names, "cap": cap, "theories": {}}
+    out = {"tickers": names, "cap": cap, "costs": costs or {}, "theories": {}}
     for key, w in theories.items():
         stats = describe(w, mu, sigma)
+        weights_out = {names[i]: round(float(w[i]) * 100, 2)
+                       for i in range(len(names)) if w[i] > 0.005}
+        # The blended ongoing charge of the mix, so "what it costs to hold"
+        # sits beside "what it is expected to earn".
+        fee = sum(float(w[i]) * (costs or {}).get(names[i], 0.0)
+                  for i in range(len(names)))
         out["theories"][key] = {
             **stats,
-            "weights": {names[i]: round(float(w[i]) * 100, 2)
-                        for i in range(len(names)) if w[i] > 0.005},
+            "fee": round(fee * 100, 3),
+            "weights": weights_out,
         }
     baseline = out["theories"]["current"]["growth"]
     for key, block in out["theories"].items():
@@ -310,7 +338,8 @@ def stress_correlation(returns: pd.DataFrame, portfolio: pd.Series,
 
 
 def hedges(returns: pd.DataFrame, weights: pd.Series, candidates: pd.DataFrame,
-           benchmark: pd.Series, portfolio: pd.Series) -> list[dict]:
+           benchmark: pd.Series, portfolio: pd.Series,
+           costs: dict[str, float] | None = None) -> list[dict]:
     """Rank candidates by what they do to compounding, not just to variance.
 
     A hedge that removes volatility but costs more return than the variance
@@ -333,7 +362,7 @@ def hedges(returns: pd.DataFrame, weights: pd.Series, candidates: pd.DataFrame,
         if len(joint) < 120:
             continue
         sigma = shrink_covariance(ewma_cov(joint).to_numpy())
-        mu = capm_returns(joint, benchmark).reindex(joint.columns).to_numpy()
+        mu = capm_returns(joint, benchmark, costs).reindex(joint.columns).to_numpy()
 
         best = None
         for step in range(0, 41):
@@ -575,4 +604,52 @@ def tax_on_plan(sells: list[dict], holdings: list[dict],
         "tax": round(taxable * CGT_RATE, 2),
         "rate": CGT_RATE,
         "coverage": round(100 * len(priced) / max(1, len(sells)), 0),
+    }
+
+
+#: What it costs to trade, by venue. Assumptions, not measurements - Davy's
+#: contract notes do not break out commission from FX spread, and the two
+#: are the same money to you either way. Adjust if your rate differs.
+TRADING_COSTS = {
+    "commission_pct": 0.005,     # Davy-style percentage commission
+    "commission_min": 14.99,     # and its floor per contract note
+    "fx_pct": 0.0015,            # currency conversion on a non-EUR trade
+}
+
+
+def trading_cost(trades: list[dict], holdings: list[dict],
+                 assumptions: dict | None = None) -> dict:
+    """What executing the plan costs in commission and currency conversion.
+
+    Small trades are where this bites. A EUR 356 buy carrying a EUR 14.99
+    minimum commission is paying 4.2% to be executed, which no allocation
+    improvement recovers - so the per-trade cost as a percentage is reported
+    alongside the total, because the total looks tolerable and the small
+    trades inside it do not.
+    """
+    assumptions = {**TRADING_COSTS, **(assumptions or {})}
+    currency = {h["ticker"]: h.get("currency", "EUR") for h in holdings}
+
+    rows, total = [], 0.0
+    for trade in trades:
+        euros = float(trade["euros"])
+        commission = max(euros * assumptions["commission_pct"],
+                         assumptions["commission_min"])
+        fx = euros * assumptions["fx_pct"] if currency.get(trade["ticker"], "EUR") != "EUR" else 0.0
+        cost = commission + fx
+        total += cost
+        rows.append({
+            "ticker": trade["ticker"],
+            "action": trade["action"],
+            "euros": round(euros, 2),
+            "cost": round(cost, 2),
+            "costPct": round(100 * cost / euros, 2) if euros else 0.0,
+        })
+
+    rows.sort(key=lambda r: -r["costPct"])
+    return {
+        "total": round(total, 2),
+        "trades": rows,
+        "worst": rows[0] if rows else None,
+        "assumptions": assumptions,
     }

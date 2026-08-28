@@ -39,12 +39,17 @@ SYMBOL_MAP = {
     "AMD": "AMD", "MSTR": "MSTR", "RR": "RR", "HUMA": "HUMA",
     "AIR1": "EADSY",     # Airbus: T212's European line, the sheet holds the ADR
     "EUNM": "IEMG",      # iShares MSCI EM: the sheet holds the US-listed line
+    "GOOGL": "GOOGL", "ANET": "ANET", "AVGO": "AVGO",
+    "VUAA": "VUAA.DE",   # Vanguard S&P 500 Acc, Xetra line
+    "RHM": "RHM.DE",     # Rheinmetall, Xetra
     # Davy contract-note descriptions, matched on a distinctive fragment
     "TESLA INC": "TSLA",
     "NVIDIA CORP": "NVDA",
     "PALANTIR TECH": "PLTR",
     "AMAZON COM INC": "AMZN",
     "BYD COMPANY": "BYDDY",
+    "BROADCOM INC": "AVGO",
+    "ADVANCED MICRO DEV": "AMD",
     "XTRACKERS S&P500 EQL WGHT": "XDEW.DE",
 }
 
