@@ -99,3 +99,41 @@ def test_as_dict_is_strict_json():
     result = montecarlo.simulate(START, 0.08, 0.22, seed=1, n_paths=2_000)
     encoded = json.dumps(result.as_dict(), allow_nan=False)
     assert json.loads(encoded)["fan"][0]["median"] == START
+
+
+def test_bootstrap_preserves_the_drift_of_the_series_it_resamples():
+    """Regression: blocks used to be drawn only from starts that fit inside
+    the series, so days near either end appeared in fewer blocks than days in
+    the middle and the resampled mean drifted away from the sample mean.
+
+    On a real book that cost 2.5 percentage points a year and turned a rising
+    median into a falling one. Circular blocks give every observation the same
+    number of chances to be drawn.
+    """
+    rng = np.random.default_rng(4)
+    daily = rng.normal(0.0004, 0.012, 500)
+    # Put the good days at the very end, which is exactly where the old
+    # sampler under-weighted them.
+    daily[-40:] += 0.004
+
+    source_drift = float(np.log1p(daily).mean() * montecarlo.TRADING_DAYS)
+    paths = montecarlo._monthly_paths_bootstrap(
+        100.0, daily, months=120, n_paths=20_000, rng=np.random.default_rng(9)
+    )
+    implied = float(np.log(np.median(paths[:, -1]) / 100.0) / 10)
+
+    assert implied == pytest.approx(source_drift, abs=0.004)
+
+
+def test_every_observation_can_be_drawn():
+    """Wrapping means the last day of the series is reachable, which under
+    the old sampler it effectively was not."""
+    rng = np.random.default_rng(5)
+    daily = np.full(60, 0.001)
+    daily[-1] = 0.5                      # unmistakable marker at the very end
+
+    paths = montecarlo._monthly_paths_bootstrap(
+        100.0, daily, months=12, n_paths=400, rng=np.random.default_rng(6)
+    )
+    # If the final observation were unreachable, no path could clear this.
+    assert paths[:, -1].max() > 100 * 1.4

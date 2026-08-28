@@ -173,6 +173,7 @@ def monte_carlo_with_contributions(
     years: int = 10,
     n_paths: int = 10_000,
     seed: int = 11,
+    target_return: float | None = None,
 ) -> dict:
     """Bootstrap projection that also accepts money over time.
 
@@ -184,6 +185,12 @@ def monte_carlo_with_contributions(
     daily = returns.dropna().to_numpy()
     if daily.size < 250:
         return {}
+
+    # Same split as the headline projection: shape from the sample, drift
+    # from a forward assumption.
+    sample_mu = float(daily.mean() * TRADING_DAYS)
+    if target_return is not None:
+        daily = daily - (sample_mu - target_return) / TRADING_DAYS
 
     months = years * 12
     step = TRADING_DAYS // 12
@@ -215,14 +222,17 @@ def monte_carlo_with_contributions(
 
     paid_in = start_value + monthly_contribution * months
     final = track[:, -1]
-    drift = float(daily.mean() * TRADING_DAYS)
     return {
         "years": years,
+        "sampleReturn": round(sample_mu, 4),
+        "assumedReturn": round(target_return, 4) if target_return is not None else None,
         "warning": (
-            f"Resampled from {daily.size / TRADING_DAYS:.1f} years of this book's "
-            f"own returns, which annualise to {drift:.0%}. Over a decade that "
-            "compounds into a median no equity book has sustained. The spread "
-            "between the 5th and 95th percentile is the part worth reading."
+            f"Shape resampled from {daily.size / TRADING_DAYS:.1f} years of this "
+            f"book's own returns; drift set to "
+            + (f"{target_return:.1%} rather than the sample's {sample_mu:.0%}."
+               if target_return is not None else f"the sample's {sample_mu:.0%}.")
+            + " That history contains no 2008 and no 2020, so the bad case is "
+              "optimistic - there is no true crash in it to resample from."
         ),
         "monthlyContribution": monthly_contribution,
         "paidIn": round(paid_in, 2),

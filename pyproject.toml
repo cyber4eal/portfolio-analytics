@@ -13,10 +13,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only needed to import broker statements and the pension PDF.
+statements = ["xlrd>=2.0.1", "pypdf>=4.0"]
+fundengine = ["yfinance>=0.2.40", "requests>=2.32", "google-api-python-client>=2.130",
+              "google-auth>=2.30", "python-dotenv>=1.0"]
+
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
-include = ["portfolio_analytics*"]
+include = ["portfolio_analytics*", "fundengine*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -56,6 +56,69 @@ def _sheets_client():
     return sheets_client
 
 
+_QUOTE_CACHE: dict = {}
+
+
+def _quote(ticker: str) -> dict:
+    """Live lookup for a ticker, held or not.
+
+    Same shape of answer as the Telegram bot's /quote plus enough return
+    history for the page to measure the thing against the book. Cached for
+    an hour: Yahoo is rate-limited and this sits behind a single-user page,
+    so the same ticker gets looked up repeatedly while someone reads it.
+    """
+    import time as _time
+
+    hit = _QUOTE_CACHE.get(ticker)
+    if hit and _time.time() - hit[0] < 3600:
+        return hit[1]
+
+    import yfinance as yf
+
+    out = {"ticker": ticker}
+    try:
+        handle = yf.Ticker(ticker)
+        info = handle.info or {}
+        dividend = info.get("dividendYield")
+        out.update({
+            "name": info.get("longName") or info.get("shortName") or ticker,
+            "sector": info.get("sector") or info.get("category") or "",
+            "country": info.get("country") or "",
+            "currency": info.get("currency") or "",
+            "price": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "marketCap": info.get("marketCap"),
+            "pe": info.get("trailingPE"),
+            # Yahoo reports this as a percent, not a fraction.
+            "dividendYield": (float(dividend) / 100) if dividend else None,
+            "high52": info.get("fiftyTwoWeekHigh"),
+            "low52": info.get("fiftyTwoWeekLow"),
+            "quoteType": info.get("quoteType"),
+        })
+    except Exception as exc:                                  # noqa: BLE001
+        out["infoError"] = f"{type(exc).__name__}"
+
+    try:
+        history = yf.download(ticker, period="5y", interval="1d",
+                              auto_adjust=True, progress=False)
+        closes = history["Close"]
+        if hasattr(closes, "columns"):
+            closes = closes.iloc[:, 0]
+        closes = closes.dropna()
+        if len(closes) > 30:
+            returns = closes.pct_change(fill_method=None).dropna()
+            out["returns"] = {
+                "dates": [d.date().isoformat() for d in returns.index],
+                "values": [round(float(v), 6) for v in returns],
+            }
+            if not out.get("price"):
+                out["price"] = round(float(closes.iloc[-1]), 4)
+    except Exception as exc:                                  # noqa: BLE001
+        out["historyError"] = f"{type(exc).__name__}"
+
+    _QUOTE_CACHE[ticker] = (_time.time(), out)
+    return out
+
+
 class Handler(SimpleHTTPRequestHandler):
     """API on /api/*, static site on everything else.
 
@@ -104,8 +167,13 @@ class Handler(SimpleHTTPRequestHandler):
                     "ledger": str(ledger.LEDGER),
                     "trades": len(ledger.read_all()),
                 })
+            if route.path == "/api/quote":
+                ticker = (query.get("ticker") or [""])[0].strip().upper()
+                if not ticker:
+                    return self._send(400, {"error": "ticker is required"})
+                return self._send(200, _quote(ticker))
             if route.path == "/api/pension":
-                return self._send(200, pension.summary())
+                return self._send(200, pension.accrue(pension.summary()))
             if route.path == "/api/transactions":
                 trades = ledger.read_all()
                 if portfolio and portfolio != "Combined":
@@ -132,10 +200,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._record(body)
             if route.path == "/api/pension/holdings":
                 pension.set_holdings(body.get("holdings") or [])
-                return self._send(200, pension.summary())
+                return self._send(200, pension.accrue(pension.summary()))
             if route.path == "/api/pension/contribution":
                 pension.add_contribution(body)
-                return self._send(201, pension.summary())
+                return self._send(201, pension.accrue(pension.summary()))
+            if route.path == "/api/pension/rate":
+                # A pay rise makes the trailing average the wrong thing to
+                # project forward; this pins what to use instead.
+                raw = body.get("monthly")
+                pension.set_contribution_override(
+                    None if raw in (None, "", "auto") else float(raw))
+                return self._send(200, pension.accrue(pension.summary()))
             if route.path == "/api/size":
                 return self._send(200, advice.size_position(
                     side=body.get("side", "buy"),

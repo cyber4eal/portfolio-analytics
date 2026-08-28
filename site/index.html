@@ -17,7 +17,21 @@
   --green:#1E7A46; --loss:#B9002F;
   --c1:#14527A; --c2:#4A7FA5; --c3:#0F7E82; --c4:#2A9D9F; --c5:#7FB8B6;
   --c6:#0B1030; --c7:#3A3F66; --c8:#7C7FA0; --c9:#00B2A9; --c10:#6FD5CE;
+  --shade:#EAF4F4;
+  color-scheme:light;
   font-size:16px;
+}
+/* Dark is a real repaint, not an inverted filter: the chart palette has to
+   keep its hue relationships or the donuts stop being readable. */
+:root[data-theme="dark"]{
+  --ink:#E6EDF3; --slate:#9AA4B2; --paper:#161B22; --mist:#0D1117;
+  --line:#2A313C; --line-soft:#222933;
+  --accent:#2DD4BF; --accent-dark:#14B8A6; --navy:#0B1030;
+  --green:#3FB950; --loss:#F85149;
+  --c1:#5B9BD5; --c2:#7FB3D5; --c3:#2DD4BF; --c4:#5EEAD4; --c5:#99F6E4;
+  --c6:#8B93C7; --c7:#A5ABD6; --c8:#C7CBE4; --c9:#22D3EE; --c10:#67E8F9;
+  --shade:#12312E;
+  color-scheme:dark;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
@@ -29,15 +43,18 @@ button{font:inherit;cursor:pointer}
 .masthead{background:var(--paper);border-bottom:1px solid var(--line)}
 .masthead-inner{max-width:1240px;margin:0 auto;padding:18px 24px;display:flex;
   align-items:center;gap:18px;flex-wrap:wrap}
-.logo-box{background:#000;color:#fff;width:74px;height:74px;display:inline-flex;
+.logo-box{background:var(--ink);color:var(--paper);width:74px;height:74px;display:inline-flex;
   align-items:center;justify-content:center;font-size:23px;font-weight:700;
   letter-spacing:.02em;flex:0 0 auto}
 .centre-title{font-size:27px;font-weight:300;letter-spacing:-.01em}
 .centre-title strong{font-weight:700}
 .masthead .spacer{flex:1}
 .bookpick{display:flex;flex-direction:column;gap:5px;margin-right:6px}
+.themeToggle{background:none;border:1px solid var(--line);color:var(--slate);
+  width:38px;height:38px;font-size:16px;line-height:1;margin-right:14px}
+.themeToggle:hover{color:var(--ink);border-color:var(--ink)}
 .bookpick label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--slate)}
-.bookpick select{font-size:15px;padding:8px 11px;border:1px solid var(--ink);min-width:150px;background:var(--paper)}
+.bookpick select{font-size:15px;padding:8px 11px;border:1px solid var(--ink);min-width:150px;background:var(--paper);color:var(--ink)}
 .asat{font-size:12.5px;color:var(--slate);text-align:right;line-height:1.7}
 
 .ribbon{background:var(--navy);color:#fff;font-size:12.5px;padding:7px 24px;text-align:center}
@@ -49,13 +66,13 @@ button{font:inherit;cursor:pointer}
 .navbar button{background:none;border:0;padding:14px 16px;font-size:14px;
   color:var(--slate);border-bottom:3px solid transparent;white-space:nowrap}
 .navbar button:hover{color:var(--ink)}
-.navbar button[aria-selected="true"]{color:var(--ink);border-bottom-color:#000;font-weight:600}
+.navbar button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
 
 .wrap{max-width:1240px;margin:0 auto;padding:26px 24px 72px}
 .view{display:none}
 .view.on{display:block}
 
-.section-head{border-top:3px solid #000;background:var(--mist);padding:16px 20px;margin-bottom:20px}
+.section-head{border-top:3px solid var(--ink);background:var(--mist);padding:16px 20px;margin-bottom:20px}
 .section-head h2{font-size:21px;font-weight:600;letter-spacing:-.01em}
 .section-head p{font-size:13px;color:var(--slate);margin-top:4px;max-width:78ch}
 
@@ -81,7 +98,7 @@ table.grid{width:100%;border-collapse:collapse;font-size:13.5px}
 .grid th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--slate);
   font-weight:600;white-space:nowrap;background:var(--mist);position:sticky;top:0}
 .grid td.num,.grid th.num{text-align:right;font-variant-numeric:tabular-nums}
-.grid tr.me{background:#EAF4F4}
+.grid tr.me{background:var(--shade)}
 .grid tr.me td{font-weight:600}
 .tablewrap{overflow:auto;max-height:520px}
 .tablewrap table.grid{min-width:700px}
@@ -91,22 +108,24 @@ table.grid{width:100%;border-collapse:collapse;font-size:13.5px}
 .pos{color:var(--green)} .neg{color:var(--loss)}
 .swatch{display:inline-block;width:10px;height:10px;margin-right:7px;vertical-align:middle}
 
-input.val,input[type=number],select{padding:6px 9px;border:1px solid var(--line);
+input,select,textarea{padding:6px 9px;border:1px solid var(--line);
   background:var(--paper);color:var(--ink);font:inherit;font-size:13.5px}
 input.val{width:112px;text-align:right;font-variant-numeric:tabular-nums}
-.btn{padding:7px 14px;border:1px solid #000;background:#000;color:#fff;font-size:13.5px}
+.btn{padding:7px 14px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);font-size:13.5px}
 .btn.ghost{background:transparent;color:var(--ink)}
 button.link{background:none;border:0;color:var(--slate);text-decoration:underline;font-size:12.5px;padding:0}
 .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;
   padding:13px 16px;background:var(--mist);border:1px solid var(--line);margin-bottom:20px}
 .controls label{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--slate)}
 input[type=range]{accent-color:var(--accent);width:180px;vertical-align:middle}
-.banner{background:#EAF4F4;border-left:3px solid var(--accent);padding:10px 14px;
+.banner{background:var(--shade);border-left:3px solid var(--accent);padding:10px 14px;
   font-size:13px;margin-bottom:18px}
-.warnbox{background:#FDF6E7;border-left:3px solid #B07C1F;padding:10px 14px;
-  font-size:12.5px;color:#6B5417;margin-top:12px}
+.warnbox{background:color-mix(in srgb, #B07C1F 12%, var(--paper));
+  border-left:3px solid #B07C1F;padding:10px 14px;
+  font-size:12.5px;color:var(--ink);margin-top:12px}
 
 #mapwrap{position:relative;background:var(--mist);border:1px solid var(--line)}
+#worldmap path{stroke:var(--paper)}
 #worldmap{display:block;width:100%;height:auto}
 #worldmap path{stroke:var(--paper);stroke-width:.4;transition:opacity .12s}
 #worldmap path.hit:hover{opacity:.75;cursor:default}
@@ -145,6 +164,7 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <label for="bookSelect">Portfolio</label>
       <select id="bookSelect"></select>
     </div>
+    <button class="themeToggle" id="themeToggle" title="Switch between light and dark" aria-label="Switch theme"></button>
     <div class="asat" id="asof">loading…</div>
   </div>
 </div>
@@ -289,13 +309,23 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <p>Six thousand paths, block-bootstrapped from the book's own daily returns so its fat tails survive into the fan rather than being smoothed into a normal curve. Sampling in 21-day blocks keeps volatility clustering intact — calm and violent stretches stay lumpy instead of averaging out.</p>
     </div>
     <div class="controls">
+      <label for="mcStart">Starting from</label>
+      <span class="muted">€</span><input type="number" id="mcStart" step="500" min="0" style="width:120px">
+      <button class="btn ghost" id="mcStartReset">this book</button>
       <label for="mcYears">Horizon</label>
-      <input type="range" id="mcYears" min="1" max="20" step="1" value="10"><strong id="mcYearsLabel">10 yrs</strong>
+      <input type="range" id="mcYears" min="1" max="30" step="1" value="10"><strong id="mcYearsLabel">10 yrs</strong>
       <label for="mcMonthly">Monthly top-up</label>
-      <input type="number" id="mcMonthly" value="500" step="100" min="0" style="width:110px">
-      <label for="mcDrift">Return p.a.</label>
+      <span class="muted">€</span><input type="number" id="mcMonthly" value="0" step="100" min="0" style="width:100px">
+    </div>
+    <div class="controls">
+      <label for="mcBasis">Expected return</label>
+      <select id="mcBasis">
+        <option value="capm">CAPM — cash + beta × equity risk premium</option>
+        <option value="custom">Set it myself</option>
+        <option value="sample">Whatever this book has done (not a forecast)</option>
+      </select>
       <input type="number" id="mcDrift" step="0.5" style="width:90px"> %
-      <button class="btn ghost" id="mcReset">use the book's own</button>
+      <span class="muted" id="mcBasisNote"></span>
     </div>
     <div class="panels">
       <div class="panel wide">
@@ -360,9 +390,48 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
   <section class="view" id="view-pension">
     <div class="section-head">
       <h2>Pension</h2>
-      <p>Kept apart from the tradable books on purpose. The money is not accessible, most provider funds have no market ticker, and folding the pot into your weights would inflate every cap and budget that depends on the tradable total. It still counts towards what you have.</p>
+      <p>Kept apart from the tradable books on purpose. The money is not accessible, most scheme funds have no market ticker, and folding the pot into your weights would inflate every cap and budget that depends on the tradable total. It still counts towards what you have.</p>
     </div>
     <div id="pensionBox"></div>
+    <div class="panels">
+      <div class="panel wide">
+        <h3>Where it gets to</h3>
+        <div class="controls">
+          <label for="penYears">Years to retirement</label>
+          <input type="range" id="penYears" min="5" max="45" step="1" value="35"><strong id="penYearsLabel">35</strong>
+          <label for="penMonthly">Monthly in</label>
+          <span class="muted">€</span><input type="number" id="penMonthly" step="25" min="0" style="width:100px">
+          <button class="btn ghost" id="penRateSave">save as my new rate</button>
+          <button class="btn ghost" id="penRateAuto">back to the average</button>
+        </div>
+        <div class="body"><div class="chartbox tall"><canvas id="chartPension"></canvas></div></div>
+        <div class="warnbox" id="penWarning"></div>
+      </div>
+      <div class="panel">
+        <h3>Contributions in</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartPenContrib"></canvas></div></div>
+      </div>
+      <div class="panel">
+        <h3>Fund split</h3>
+        <div class="body"><div class="chartbox"><canvas id="chartPenSplit"></canvas></div></div>
+        <p class="note" id="penProxyNote"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-explore">
+    <div class="section-head">
+      <h2>Explore a stock</h2>
+      <p>Look up anything, held or not, and see what it is and what owning it would do to this book. Everything here is measured, not opinionated — the same numbers the Telegram bot's <code>/quote</code> and <code>/analyze</code> report, computed the same way.</p>
+    </div>
+    <div class="controls">
+      <label for="exploreTicker">Ticker</label>
+      <input id="exploreTicker" placeholder="e.g. GOOGL, ASML.AS, VWCE.DE" style="width:210px">
+      <button class="btn" id="exploreGo">look it up</button>
+      <label for="exploreWeight">Buy at</label>
+      <input type="range" id="exploreWeight" min="1" max="25" step="1" value="5"><strong id="exploreWeightLabel">5%</strong>
+    </div>
+    <div id="exploreBox"></div>
   </section>
 
   <section class="view" id="view-stress">

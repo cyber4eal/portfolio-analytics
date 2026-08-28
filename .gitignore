@@ -17,3 +17,4 @@ data/*.csv
 # Ledger and pension hold live personal figures, same as data.json.
 data/transactions.jsonl
 data/pension.json
+data/*.jsonl

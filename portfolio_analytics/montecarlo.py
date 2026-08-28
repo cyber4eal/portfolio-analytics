@@ -131,11 +131,21 @@ def _monthly_paths_bootstrap(
     rng: np.random.Generator,
     block_days: int = 21,
 ) -> np.ndarray:
-    """Block bootstrap of real daily returns, aggregated to month ends.
+    """Circular block bootstrap of real daily returns, aggregated to month ends.
 
     Sampling in blocks rather than single days preserves volatility
     clustering - calm periods and violent periods stay lumpy instead of
     being averaged into a smooth normal.
+
+    The blocks wrap around the end of the series, and that detail is not
+    cosmetic. With ordinary blocks a day can only appear in a block that
+    reaches it, so the first and last `block_days` of the sample turn up in
+    progressively fewer blocks than the middle does. The resampled mean is
+    then not the sample mean, and the error is whatever those edges happened
+    to contain: on a 515-day book with a strong recent run, it cost 2.5
+    percentage points of annual drift and turned a rising median into a
+    falling one. Wrapping gives every observation exactly `block_days`
+    chances to be drawn, so the resampled mean is unbiased.
     """
     r = np.asarray(daily_returns, dtype=float)
     r = r[np.isfinite(r)]
@@ -146,11 +156,10 @@ def _monthly_paths_bootstrap(
 
     total_days = months * (TRADING_DAYS // MONTHS_PER_YEAR)
     n_blocks = int(np.ceil(total_days / block_days))
-    max_start = r.size - block_days
 
-    starts = rng.integers(0, max_start + 1, size=(n_paths, n_blocks))
+    starts = rng.integers(0, r.size, size=(n_paths, n_blocks))
     offsets = np.arange(block_days)
-    idx = (starts[:, :, None] + offsets[None, None, :]).reshape(n_paths, -1)
+    idx = ((starts[:, :, None] + offsets[None, None, :]) % r.size).reshape(n_paths, -1)
     sampled = r[idx][:, :total_days]
 
     log_paths = np.cumsum(np.log1p(sampled), axis=1)

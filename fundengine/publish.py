@@ -112,13 +112,53 @@ def build(agent_dir: str, allocation: float = 0.10,
     print("Ranking additions and projecting...")
     additions = combo.rank_additions(holding_returns, weights, fund_returns,
                                      benchmark, allocation=allocation)
-    forecast = combo.projection(portfolio_series, tradable_value)
+    book_beta = next((l.beta for l in lines if l.id == combo.PORTFOLIO_ID), 1.0)
+    forecast = combo.projection(portfolio_series, tradable_value, beta=book_beta)
 
     print("Profiling holdings and exploding funds...")
     profiles = profile.fetch(sorted(set(available_holdings + fund_tickers)))
     holding_dicts = [h.as_dict() for h in holdings]
     exposure = profile.exposures(holding_dicts, profiles)
     income = profile.income(holding_dicts, profiles)
+
+    print("Projecting the pension...")
+    all_trades = ledger.read_all()
+    pension_payload = pension.accrue(pension.summary())
+    monthly_contribution = pension.recent_monthly(pension_payload)
+    if pension_payload["total"] > 0:
+        # Several scheme funds share one proxy - two of these three are
+        # global equity trackers - so values are summed per ticker before
+        # weighting. Keeping one column per holding put a duplicate column
+        # in the price matrix and broke the weighting outright.
+        pension_values: dict = {}
+        for h in pension_payload["holdings"]:
+            ticker = h.get("ticker")
+            value = float(h.get("value_eur") or 0)
+            if not ticker or ticker not in closes.columns or value <= 0:
+                continue
+            pension_values[ticker] = pension_values.get(ticker, 0.0) + value
+        pension_tickers = sorted(pension_values)
+        if pension_tickers:
+            pw = pd.Series({t: pension_values[t] for t in pension_tickers}, dtype=float)
+            pw = pw / pw.sum()
+            pension_series = combo.portfolio_returns(
+                prices.to_returns(closes[pension_tickers]), pw)
+            pension_beta = float(
+                pd.concat([pension_series, benchmark], axis=1, join="inner")
+                .dropna().cov().iloc[0, 1] / benchmark.var())
+            pension_payload["projection"] = scenarios.monte_carlo_with_contributions(
+                pension_series, pension_payload.get("estimatedTotal")
+                or pension_payload["total"],
+                monthly_contribution=monthly_contribution,
+                years=35, target_return=combo.expected_return(pension_beta))
+            pension_payload["proxyNote"] = (
+                "Scheme funds are unlisted, so returns are proxied by listed "
+                "trackers with the same mandate: "
+                + ", ".join(sorted(set(pension_tickers)))
+                + ". The pot value is the statement's; only the shape of the "
+                "simulation comes from the proxy.")
+            pension_payload["beta"] = round(pension_beta, 2)
+    pension_payload["monthlyContribution"] = monthly_contribution
 
     print("Stressing, decomposing and projecting...")
     stress = {
@@ -136,7 +176,8 @@ def build(agent_dir: str, allocation: float = 0.10,
         if curve:
             frontiers[fund.id] = curve
     contributing = scenarios.monte_carlo_with_contributions(
-        portfolio_series, tradable_value, monthly_contribution=500.0)
+        portfolio_series, tradable_value, monthly_contribution=500.0,
+        target_return=combo.expected_return(book_beta))
 
     matrix = pd.concat(
         [holding_returns, fund_returns, benchmark.rename("__benchmark__")],
@@ -156,17 +197,26 @@ def build(agent_dir: str, allocation: float = 0.10,
         if not priced:
             continue
         view_value = sum(h.value_eur for h in priced)
-        view_weights = pd.Series({h.ticker: h.value_eur for h in priced}, dtype=float)
+        # Two holdings can share a ticker - the pension's scheme funds are
+        # proxied by the same tracker, and a symbol can appear in both books.
+        # Summing per ticker keeps the weight vector the same length as the
+        # column list; building a dict from a list with repeats silently
+        # dropped one and then failed the matrix multiply.
+        by_ticker: dict = {}
+        for h in priced:
+            by_ticker[h.ticker] = by_ticker.get(h.ticker, 0.0) + h.value_eur
+        view_tickers = sorted(by_ticker)
+        view_weights = pd.Series({t: by_ticker[t] for t in view_tickers}, dtype=float)
         view_weights = view_weights / view_weights.sum()
         series = combo.portfolio_returns(
-            holding_returns.reindex(columns=[h.ticker for h in priced]), view_weights)
+            holding_returns.reindex(columns=view_tickers), view_weights)
         book_views[name] = {
             "name": name,
             "holdings": [h.as_dict() for h in rows],
             "priced": round(view_value, 2),
             "parked": round(book.parked_value(rows), 2),
             "riskContributions": scenarios.risk_contributions(
-                holding_returns.reindex(columns=[h.ticker for h in priced]), view_weights),
+                holding_returns.reindex(columns=view_tickers), view_weights),
             "income": profile.income([h.as_dict() for h in rows], profiles),
             "exposure": profile.exposures([h.as_dict() for h in rows], profiles),
             "stress": {
@@ -176,10 +226,12 @@ def build(agent_dir: str, allocation: float = 0.10,
             },
         }
         view_correlations = scenarios.correlation_matrix(
-            holding_returns.reindex(columns=[h.ticker for h in priced]), view_weights)
+            holding_returns.reindex(columns=view_tickers), view_weights)
         view_rows = [h.as_dict() for h in rows]
         hhi = float((view_weights ** 2).sum())
         book_views[name]["correlations"] = view_correlations
+        book_views[name]["reconciliation"] = ledger.reconcile(
+            all_trades, view_rows, None if name in (book.COMBINED, pension.BOOK) else name)
         book_views[name]["advice"] = {
             "sell": advice.sell_candidates(
                 book_views[name]["riskContributions"], view_correlations,
@@ -214,7 +266,7 @@ def build(agent_dir: str, allocation: float = 0.10,
         "buyCandidates": advice.buy_candidates(
             additions, [f.as_dict() for f in universe.UNIVERSE], exposure, allocation),
         "ledger": ledger.summary(ledger.read_all()),
-        "pension": pension.summary(),
+        "pension": pension_payload,
         "exposure": exposure,
         "income": income,
         "stress": stress,

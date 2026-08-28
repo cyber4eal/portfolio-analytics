@@ -163,3 +163,68 @@ def test_a_balanced_book_gets_no_notes():
                 "currencies": {"EUR": 60.0, "USD": 40.0},
                 "sectors": {"Technology": 20.0}}
     assert advice.concentration_notes(exposure, 9.0, 10) == []
+
+
+# ---------------- accrual and contribution rate ----------------
+
+def test_the_pot_accrues_the_months_since_the_last_statement(tmp_path):
+    """A statement is only fresh on the day it is downloaded. Between them
+    the pot would otherwise drift below reality by a month's pay a month."""
+    from datetime import date
+
+    store = tmp_path / "pension.json"
+    pension.set_holdings([{"name": "Fund", "value_eur": 5_000}], store)
+    for month in (5, 6, 7):
+        pension.add_contribution(
+            {"date": f"2026-0{month}-11", "amount_eur": 400}, store)
+
+    accrued = pension.accrue(pension.summary(path=store), as_of=date(2026, 10, 11))
+
+    assert accrued["accruedMonths"] == 3
+    assert accrued["accrued"] == pytest.approx(1_200)
+    assert accrued["estimatedTotal"] == pytest.approx(6_200)
+    assert "estimate" in accrued["accrualNote"]
+
+
+def test_no_accrual_when_the_statement_is_current(tmp_path):
+    from datetime import date
+
+    store = tmp_path / "pension.json"
+    pension.set_holdings([{"name": "Fund", "value_eur": 100}], store)
+    pension.add_contribution({"date": "2026-08-11", "amount_eur": 400}, store)
+
+    accrued = pension.accrue(pension.summary(path=store), as_of=date(2026, 8, 28))
+    assert accrued["accruedMonths"] == 0
+    assert accrued["estimatedTotal"] == pytest.approx(100)
+
+
+def test_a_pinned_rate_beats_the_trailing_average(tmp_path):
+    """After a pay rise the trailing average records the old salary."""
+    store = tmp_path / "pension.json"
+    for month in (5, 6, 7):
+        pension.add_contribution(
+            {"date": f"2026-0{month}-11", "amount_eur": 300}, store)
+    assert pension.recent_monthly(pension.summary(path=store)) == pytest.approx(300)
+
+    pension.set_contribution_override(500, store)
+    assert pension.recent_monthly(pension.summary(path=store)) == pytest.approx(500)
+
+    pension.set_contribution_override(None, store)
+    assert pension.recent_monthly(pension.summary(path=store)) == pytest.approx(300)
+
+
+def test_a_negative_contribution_rate_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="negative"):
+        pension.set_contribution_override(-1, tmp_path / "p.json")
+
+
+def test_both_halves_of_a_month_count_toward_the_rate(tmp_path):
+    """Employer and employee land as separate rows on the same day; the rate
+    is what goes in, not what either side puts in."""
+    store = tmp_path / "pension.json"
+    for month in (6, 7, 8):
+        pension.add_contribution({"date": f"2026-0{month}-11", "amount_eur": 100,
+                                  "source": "employee"}, store)
+        pension.add_contribution({"date": f"2026-0{month}-11", "amount_eur": 300,
+                                  "source": "employer"}, store)
+    assert pension.recent_monthly(pension.summary(path=store)) == pytest.approx(400)

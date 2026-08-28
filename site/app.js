@@ -5,9 +5,15 @@
    screen is derived from weights at render time. */
 
 const TRADING_DAYS = 252, LAMBDA = 0.94, Z95 = 1.6448536269514722;
-const PALETTE = ["#14527A","#4A7FA5","#0F7E82","#2A9D9F","#7FB8B6",
-                 "#0B1030","#3A3F66","#7C7FA0","#00B2A9","#6FD5CE"];
-const INK = "#1C1C1E", SLATE = "#5B5B62", LINE = "#E6E3DE";
+/* Read from the stylesheet rather than hardcoded, so one theme switch
+   repaints the charts too instead of leaving grey axes on a dark page. */
+const cssVar = name =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const PALETTE = () => Array.from({ length: 10 }, (_, i) => cssVar(`--c${i + 1}`));
+const INK = () => cssVar("--ink");
+const SLATE = () => cssVar("--slate");
+const LINE = () => cssVar("--line");
+const THEME_KEY = "bond.theme";
 
 let DATA = null, holdings = [], charts = {}, worldGeo = null;
 let BOOK = null;              // which book is on screen
@@ -193,14 +199,46 @@ function chart(id, config) {
   const el_ = document.getElementById(id);
   if (!el_) return;
   Chart.defaults.font.family = '"Segoe UI",-apple-system,Helvetica,Arial,sans-serif';
-  Chart.defaults.color = SLATE;
+  Chart.defaults.color = SLATE();
   Chart.defaults.font.size = 11.5;
   charts[id] = new Chart(el_, config);
 }
 
 const gridScale = (extra = {}) => Object.assign({
-  grid: { color: LINE, drawTicks: false }, border: { display: false },
+  grid: { color: LINE(), drawTicks: false }, border: { display: false },
 }, extra);
+
+/* ---------------- theme ---------------- */
+
+function currentTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved) return saved;
+  } catch (e) { /* storage unavailable */ }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const button = document.getElementById("themeToggle");
+  if (button) {
+    button.textContent = theme === "dark" ? "☀" : "☾";
+    button.title = theme === "dark" ? "Switch to light" : "Switch to dark";
+  }
+  try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+}
+
+function toggleTheme() {
+  const next = document.documentElement.getAttribute("data-theme") === "dark"
+    ? "light" : "dark";
+  applyTheme(next);
+  // Charts bake their colours in at construction, so they have to be rebuilt.
+  if (DATA) {
+    renderDerived();
+    if (document.getElementById("view-map").classList.contains("on")) renderMap();
+    if (document.getElementById("view-cube").classList.contains("on")) renderCube();
+  }
+}
 
 /* ---------------- overview ---------------- */
 
@@ -239,7 +277,7 @@ function renderKpis(stats, value) {
 function renderGrowth(mine) {
   const window_ = new Set(mine.index);
   const datasets = [{
-    label: "My book", data: levelCurve(mine.series), borderColor: "#000",
+    label: "My book", data: levelCurve(mine.series), borderColor: INK(),
     borderWidth: 2.4, pointRadius: 0, tension: .18, order: 0,
   }];
   const picks = ["iwda", "cspx", "aggh", "sgln"];
@@ -250,7 +288,7 @@ function renderGrowth(mine) {
     if (!s) return;
     datasets.push({
       label: fund.name.replace(/ UCITS ETF.*| ETC.*/, ""), data: levelCurve(s.series),
-      borderColor: PALETTE[i * 2], borderWidth: 1.5, pointRadius: 0, tension: .18,
+      borderColor: PALETTE()[i * 2], borderWidth: 1.5, pointRadius: 0, tension: .18,
     });
   });
   chart("chartGrowth", {
@@ -278,7 +316,7 @@ function donut(id, entries, note) {
   const labels = entries.map(e => e[0]), values = entries.map(e => e[1]);
   chart(id, {
     type: "doughnut",
-    data: { labels, datasets: [{ data: values, backgroundColor: PALETTE,
+    data: { labels, datasets: [{ data: values, backgroundColor: PALETTE(),
             borderColor: "#fff", borderWidth: 2 }] },
     options: {
       maintainAspectRatio: false, cutout: "56%",
@@ -339,7 +377,7 @@ function renderYears(mine) {
     options: {
       maintainAspectRatio: false,
       plugins: { legend: { display: false },
-        datalabels: { anchor: "end", align: "end", color: SLATE, font: { size: 10 },
+        datalabels: { anchor: "end", align: "end", color: SLATE(), font: { size: 10 },
                       formatter: v => v.toFixed(1) + "%" },
         tooltip: { callbacks: { label: c => c.parsed.y.toFixed(2) + "%" } } },
       scales: { x: gridScale({ grid: { display: false } }),
@@ -490,7 +528,7 @@ function renderScatter(rows) {
         { label: "Funds", data: funds.map(r => ({ x: r.vol, y: r.cagr, n: r.name })),
           backgroundColor: "#4A7FA5", pointRadius: 6, pointHoverRadius: 8 },
         { label: "My book", data: [{ x: me.vol, y: me.cagr, n: "My book" }],
-          backgroundColor: "#000", pointRadius: 9, pointStyle: "rectRot" },
+          backgroundColor: INK(), pointRadius: 9, pointStyle: "rectRot" },
       ],
     },
     options: {
@@ -502,9 +540,9 @@ function renderScatter(rows) {
           `${c.raw.n}: ${c.parsed.y.toFixed(1)}% return at ${c.parsed.x.toFixed(1)}% vol` } },
       },
       scales: {
-        x: gridScale({ title: { display: true, text: "Volatility (annualised)", color: SLATE },
+        x: gridScale({ title: { display: true, text: "Volatility (annualised)", color: SLATE() },
                        ticks: { callback: v => v + "%" } }),
-        y: gridScale({ title: { display: true, text: "Return p.a.", color: SLATE },
+        y: gridScale({ title: { display: true, text: "Return p.a.", color: SLATE() },
                        ticks: { callback: v => v + "%" } }),
       },
     },
@@ -581,9 +619,9 @@ function renderFrontier() {
           `${c.raw.w}% fund: ${c.parsed.y.toFixed(1)}% return at ${c.parsed.x.toFixed(1)}% vol` } },
       },
       scales: {
-        x: gridScale({ title: { display: true, text: "Volatility", color: SLATE },
+        x: gridScale({ title: { display: true, text: "Volatility", color: SLATE() },
                        ticks: { callback: v => v + "%" } }),
-        y: gridScale({ title: { display: true, text: "Return p.a.", color: SLATE },
+        y: gridScale({ title: { display: true, text: "Return p.a.", color: SLATE() },
                        ticks: { callback: v => v + "%" } }),
       },
     },
@@ -717,16 +755,33 @@ function percentile(sorted, p) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+/* The forward assumption. Cash plus beta times an equity risk premium -
+   the return you can defend asking for, given the risk taken. Projecting
+   what the sample happened to deliver is what makes these charts lie: this
+   book's own sixteen months annualise near 50%, and compounding that for a
+   decade produces a number no asset class has sustained. */
+const RISK_FREE = 0.025, EQUITY_RISK_PREMIUM = 0.045;
+const capmReturn = beta => RISK_FREE + Math.max(0, beta) * EQUITY_RISK_PREMIUM;
+
 function runSimulation(mine, value) {
   const years = parseInt(document.getElementById("mcYears").value, 10);
   const monthly = parseFloat(document.getElementById("mcMonthly").value) || 0;
-  const driftInput = parseFloat(document.getElementById("mcDrift").value);
+  const startInput = parseFloat(document.getElementById("mcStart").value);
+  const start = isFinite(startInput) && startInput > 0 ? startInput : value;
+  const basis = document.getElementById("mcBasis").value;
   const months = years * 12, paths = 6000;
 
   const daily = mine.series;
   const sampleDrift = daily.reduce((a, b) => a + b, 0) / daily.length * TRADING_DAYS;
-  const target = isFinite(driftInput) ? driftInput / 100 : sampleDrift;
-  const track = bootstrapPaths(daily, value, months, monthly, paths, target - sampleDrift);
+  const capm = capmReturn(mine.beta);
+
+  let target = capm;
+  if (basis === "sample") target = sampleDrift;
+  if (basis === "custom") {
+    const typed = parseFloat(document.getElementById("mcDrift").value);
+    target = isFinite(typed) ? typed / 100 : capm;
+  }
+  const track = bootstrapPaths(daily, start, months, monthly, paths, target - sampleDrift);
 
   const fan = [];
   const stepMonths = Math.max(1, Math.round(months / 20));
@@ -745,7 +800,7 @@ function runSimulation(mine, value) {
     const col = new Float64Array(paths);
     for (let p = 0; p < paths; p++) col[p] = track[p * months + m];
     col.sort();
-    const paidIn = value + monthly * (m + 1);
+    const paidIn = start + monthly * (m + 1);
     let losses = 0;
     for (let p = 0; p < paths; p++) if (col[p] < paidIn) losses++;
     boxes.push({ label: `${y} yr`, p05: percentile(col, .05), p25: percentile(col, .25),
@@ -753,9 +808,10 @@ function runSimulation(mine, value) {
                  p95: percentile(col, .95), paidIn, probLoss: losses / paths });
   }
 
-  renderFan(fan, value, monthly, months);
+  renderFan(fan, start, monthly, months);
   renderBoxes(boxes);
-  renderMcSummary(boxes, value, monthly, months, target, sampleDrift, daily.length);
+  renderMcSummary(boxes, start, monthly, months, target, sampleDrift, capm,
+                  basis, mine, daily.length);
 }
 
 function renderFan(fan, startValue, monthly, months) {
@@ -775,7 +831,7 @@ function renderFan(fan, startValue, monthly, months) {
         band("p25", "median", "rgba(74,158,161,.35)"),
         band("median", "p75", "rgba(74,158,161,.35)"),
         band("p75", "p95", "rgba(155,199,200,.35)"),
-        { label: "Median", data: fan.map(f => f.median), borderColor: "#000",
+        { label: "Median", data: fan.map(f => f.median), borderColor: INK(),
           borderWidth: 2.4, pointRadius: 0, tension: .2, order: 0, fill: false },
         { label: "Paid in", data: fan.map(f => startValue + monthly * f.month),
           borderColor: "#B07C1F", borderWidth: 1.5, borderDash: [5, 4],
@@ -812,7 +868,7 @@ function renderBoxes(boxes) {
         { label: "Middle half", data: boxes.map(b => [b.p25, b.p75]),
           backgroundColor: "#4A9EA1", barPercentage: .7, order: 2 },
         { label: "Median", data: boxes.map(b => [b.median * 0.998, b.median * 1.002]),
-          backgroundColor: "#000", barPercentage: .78, order: 1 },
+          backgroundColor: INK(), barPercentage: .78, order: 1 },
       ],
     },
     options: {
@@ -833,24 +889,44 @@ function renderBoxes(boxes) {
   });
 }
 
-function renderMcSummary(boxes, value, monthly, months, target, sampleDrift, sampleDays) {
+function renderMcSummary(boxes, start, monthly, months, target, sampleDrift,
+                        capm, basis, mine, sampleDays) {
   const last = boxes[boxes.length - 1];
   const box = document.getElementById("mcSummary");
   box.innerHTML = "";
   if (!last) return;
+
+  // Compounded, not arithmetic: the median grows at mu - sigma^2/2, and on a
+  // book this volatile that drag is most of the expected return.
+  const vol = mine.vol / 100;
+  const drag = vol * vol / 2;
   box.append(table(["At " + last.label, ""], [
     { cells: ["Paid in", fmtEur(last.paidIn)] },
     { cells: ["Median outcome", fmtEur(last.median)] },
     { cells: ["Bad case (5th pct)", fmtEur(last.p05)] },
     { cells: ["Good case (95th pct)", fmtEur(last.p95)] },
     { cells: ["Chance of ending below what you paid in", fmtPct(last.probLoss * 100)] },
+    { cells: ["Assumed return p.a.", fmtPct(target * 100)] },
+    { cells: ["Less volatility drag", "−" + fmtPct(drag * 100)] },
+    { cells: ["Median compounds at", fmtPct((target - drag) * 100)] },
   ], { numFrom: 1 }));
 
-  document.getElementById("mcWarning").textContent =
-    `Paths are resampled from ${(sampleDays / TRADING_DAYS).toFixed(1)} years of this book's own returns, which annualise to ${(sampleDrift * 100).toFixed(0)}%` +
-    (Math.abs(target - sampleDrift) > 0.001
-      ? `; you have overridden the drift to ${(target * 100).toFixed(1)}%.`
-      : `. That is an extrapolation of a short and bullish sample, not a forecast — no equity book has sustained that over a decade. Read the width of the band, not the middle of it.`);
+  const note = document.getElementById("mcBasisNote");
+  if (note) {
+    note.textContent = basis === "capm"
+      ? `${(RISK_FREE * 100).toFixed(1)}% cash + beta ${fmtNum(mine.beta)} × ${(EQUITY_RISK_PREMIUM * 100).toFixed(1)}% = ${(capm * 100).toFixed(1)}%`
+      : basis === "sample"
+        ? `the sample's ${(sampleDrift * 100).toFixed(0)}% — an extrapolation, not a forecast`
+        : "";
+  }
+
+  const lines = [];
+  lines.push(basis === "sample"
+    ? `<strong>You are projecting this book's own ${(sampleDrift * 100).toFixed(0)}% a year forward.</strong> Nothing about ${(sampleDays / TRADING_DAYS).toFixed(1)} bullish years entitles the next ${months / 12} to repeat them; no asset class has sustained that over a decade.`
+    : `Drift is an assumption of ${(target * 100).toFixed(1)}% a year, not a measurement. The book's own ${(sampleDays / TRADING_DAYS).toFixed(1)} years annualise to ${(sampleDrift * 100).toFixed(0)}%, which is a bull market being mistaken for an expected return.`);
+  lines.push(`At ${fmtPct(mine.vol)} volatility the drag is ${fmtPct(drag * 100)} a year, so the median compounds at ${fmtPct((target - drag) * 100)} rather than ${fmtPct(target * 100)}. On a book this volatile that gap is most of the return.`);
+  lines.push(`The spread is resampled from this book's own returns, and those ${(sampleDays / TRADING_DAYS).toFixed(1)} years contain no 2008 and no 2020 — so the bad case shown is optimistic. There is no true crash in the sample to resample from.`);
+  document.getElementById("mcWarning").innerHTML = lines.join("<br><br>");
 }
 
 /* ---------------- stress ---------------- */
@@ -903,7 +979,7 @@ const TABS = [
   ["overview", "Overview"], ["holdings", "Holdings"], ["transactions", "Transactions"],
   ["advice", "Advice"], ["compare", "Against the funds"], ["map", "Map & exposure"],
   ["simulate", "Simulate"], ["stress", "Stress"], ["cube", "Risk surfaces"],
-  ["pension", "Pension"],
+  ["explore", "Explore"], ["pension", "Pension"],
 ];
 
 function renderTabs() {
@@ -929,8 +1005,13 @@ function selectTab(id) {
   if (id === "transactions") renderTransactions();
   if (id === "pension") renderPension();
   if (id === "cube") renderCube();
+  if (id === "explore") renderExplore();
   if (id === "simulate") {
     const { tickers, weights, value } = currentWeights();
+    const start = document.getElementById("mcStart");
+    // Default the starting amount to this book, so opening the tab simulates
+    // the portfolio you are looking at rather than a round number.
+    if (!start.value) start.value = Math.round(value);
     runSimulation(statsFor(tickers, weights, value), value);
   }
 }
@@ -978,6 +1059,8 @@ function selectBook(name) {
     BOOK === "Combined"
       ? "both books together — a reporting view, never a book you can trade against"
       : `${BOOK}'s book, measured against the funds you could buy instead`;
+  const start = document.getElementById("mcStart");
+  if (start) start.value = Math.round(currentWeights().value);
   renderAll();
   if (document.getElementById("view-map").classList.contains("on")) renderMap();
   if (document.getElementById("view-transactions").classList.contains("on")) renderTransactions();
@@ -1027,11 +1110,35 @@ async function boot() {
   });
   document.getElementById("mcMonthly").addEventListener("change", rerun);
   document.getElementById("mcDrift").addEventListener("change", rerun);
-  document.getElementById("mcReset").addEventListener("click", () => {
-    document.getElementById("mcDrift").value = "";
+  document.getElementById("mcStart").addEventListener("change", rerun);
+  document.getElementById("mcStartReset").addEventListener("click", () => {
+    document.getElementById("mcStart").value = Math.round(currentWeights().value);
     rerun();
   });
+  document.getElementById("mcBasis").addEventListener("change", e => {
+    document.getElementById("mcDrift").style.display =
+      e.target.value === "custom" ? "" : "none";
+    if (e.target.value === "custom" && !document.getElementById("mcDrift").value) {
+      const { tickers, weights, value } = currentWeights();
+      const mine = statsFor(tickers, weights, value);
+      document.getElementById("mcDrift").value = (capmReturn(mine.beta) * 100).toFixed(1);
+    }
+    rerun();
+  });
+  document.getElementById("mcDrift").style.display = "none";
 
+  applyTheme(currentTheme());
+  document.getElementById("themeToggle").addEventListener("click", toggleTheme);
+  document.getElementById("exploreGo").addEventListener("click", () => renderExplore());
+  document.getElementById("exploreTicker").addEventListener("keydown", e => {
+    if (e.key === "Enter") renderExplore();
+  });
+  document.getElementById("exploreWeight").addEventListener("input", e => {
+    document.getElementById("exploreWeightLabel").textContent = e.target.value + "%";
+  });
+  document.getElementById("exploreWeight").addEventListener("change", () => {
+    if (document.getElementById("exploreTicker").value.trim()) renderExplore();
+  });
   renderCaveats();
   selectBook(DATA.defaultBook);
   const hash = location.hash.replace("#", "");
@@ -1371,9 +1478,12 @@ async function renderPension() {
       "The API is not answering, so this is the pot as it stood when the site was last built and nothing can be edited from here."));
   }
 
+  if (data.accrualNote) box.append(el("div", { class: "warnbox" }, data.accrualNote));
   const cards = el("div", { class: "kpis" });
   for (const [k, v, s] of [
-    ["Pot value", fmtEur(data.total), data.updated ? `as entered ${data.updated.slice(0, 10)}` : "not set yet"],
+    ["Pot value", fmtEur(data.estimatedTotal ?? data.total),
+     data.accruedMonths ? `${fmtEur(data.total)} confirmed + ${fmtEur(data.accrued)} accrued`
+                        : (data.updated ? `as at ${data.updated.slice(0, 10)}` : "not set yet")],
     ["Contributions logged", fmtEur(data.paidIn),
      Object.entries(data.bySource || {}).map(([k2, v2]) => `${k2} ${fmtEur(v2)}`).join(" · ") || "none yet"],
     ["Growth on what is logged", data.growth === null ? "–" : fmtEur(data.growth),
@@ -1484,6 +1594,34 @@ async function renderPension() {
   }
   contribPanel.append(contribBody);
   box.append(contribPanel);
+
+  const monthly = document.getElementById("penMonthly");
+  const years = document.getElementById("penYears");
+  if (!monthly.value) monthly.value = Math.round(data.monthlyRate || 0);
+  if (!monthly.dataset.wired) {
+    monthly.dataset.wired = "1";
+    const redraw = () => renderPensionCharts(data);
+    monthly.addEventListener("change", redraw);
+    years.addEventListener("input", () => {
+      document.getElementById("penYearsLabel").textContent = years.value;
+    });
+    years.addEventListener("change", redraw);
+    document.getElementById("penRateSave").addEventListener("click", async () => {
+      await fetch("/api/pension/rate", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ monthly: parseFloat(monthly.value) || 0 }) });
+      renderPension();
+    });
+    document.getElementById("penRateAuto").addEventListener("click", async () => {
+      await fetch("/api/pension/rate", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ monthly: "auto" }) });
+      monthly.value = "";
+      renderPension();
+    });
+  }
+  document.getElementById("penYearsLabel").textContent = years.value;
+  renderPensionCharts(data);
 }
 
 /* ---------------- risk surfaces ---------------- */
@@ -1747,4 +1885,251 @@ function cubeLegend(label, lo, hi) {
 function renderCube() {
   cubeControls();
   if (cubeMode === "blend") drawBlendSurface(); else drawCorrelationSurface();
+}
+
+/* ---------------- pension charts ---------------- */
+
+/* The pot runs on different rules from the tradable books: money goes in
+   every month, nothing comes out for decades, and the funds are unlisted so
+   their behaviour is proxied. All three change what the chart means, so all
+   three are stated on it rather than buried. */
+
+function pensionProjection(data) {
+  const years = parseInt(document.getElementById("penYears").value, 10);
+  const monthly = parseFloat(document.getElementById("penMonthly").value) || 0;
+  const start = data.estimatedTotal ?? data.total;
+  const beta = data.beta ?? 1.0;
+  const target = capmReturn(beta);
+
+  // Without a proxy series there is nothing to resample, so fall back to a
+  // smooth lognormal rather than showing nothing.
+  const proxy = (data.holdings || []).map(h => h.ticker).filter(t => t && columnFor(t));
+  let daily = null;
+  if (proxy.length) {
+    const { rows } = alignedRows(proxy);
+    if (rows.length > 250) {
+      const w = new Array(proxy.length).fill(1 / proxy.length);
+      daily = rows.map(r => r.reduce((a, v, i) => a + v * w[i], 0));
+    }
+  }
+  const months = years * 12, paths = 4000;
+  if (!daily) {
+    const sigma = 0.16, mu = target;
+    daily = Array.from({ length: 800 }, () => {
+      let u = 0, v = 0;
+      while (!u) u = Math.random();
+      while (!v) v = Math.random();
+      const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+      return mu / TRADING_DAYS + z * sigma / Math.sqrt(TRADING_DAYS);
+    });
+  }
+  const sample = daily.reduce((a, b) => a + b, 0) / daily.length * TRADING_DAYS;
+  const track = bootstrapPaths(daily, start, months, monthly, paths, target - sample);
+
+  const fan = [];
+  const stride = Math.max(1, Math.round(months / 24));
+  for (let m = stride - 1; m < months; m += stride) {
+    const col = new Float64Array(paths);
+    for (let p = 0; p < paths; p++) col[p] = track[p * months + m];
+    col.sort();
+    fan.push({ month: m + 1, p05: percentile(col, .05), p25: percentile(col, .25),
+               median: percentile(col, .5), p75: percentile(col, .75), p95: percentile(col, .95) });
+  }
+  const final = new Float64Array(paths);
+  for (let p = 0; p < paths; p++) final[p] = track[p * months + months - 1];
+  final.sort();
+
+  return { fan, years, monthly, start, target, beta,
+           paidIn: start + monthly * months,
+           median: percentile(final, .5), p05: percentile(final, .05),
+           p95: percentile(final, .95) };
+}
+
+function renderPensionCharts(data) {
+  const result = pensionProjection(data);
+  const labels = result.fan.map(f => (f.month / 12).toFixed(0) + "y");
+  const band = (to, colour) => ({
+    label: "", data: result.fan.map(f => f[to]), fill: { target: "-1" },
+    backgroundColor: colour, borderWidth: 0, pointRadius: 0, tension: .2, order: 3,
+  });
+  chart("chartPension", {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "5th percentile", data: result.fan.map(f => f.p05), borderColor: "#9BC7C8",
+          borderWidth: 1, pointRadius: 0, tension: .2, fill: false },
+        band("p25", "rgba(155,199,200,.32)"),
+        band("median", "rgba(74,158,161,.32)"),
+        band("p75", "rgba(74,158,161,.32)"),
+        band("p95", "rgba(155,199,200,.32)"),
+        { label: "Median", data: result.fan.map(f => f.median), borderColor: INK(),
+          borderWidth: 2.4, pointRadius: 0, tension: .2, order: 0, fill: false },
+        { label: "Paid in", data: result.fan.map(f => result.start + result.monthly * f.month),
+          borderColor: "#B07C1F", borderWidth: 1.5, borderDash: [5, 4],
+          pointRadius: 0, tension: 0, order: 1, fill: false },
+      ],
+    },
+    options: {
+      maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10,
+          filter: i => i.text && i.text !== "" } },
+        datalabels: { display: false },
+        tooltip: { filter: i => i.dataset.label !== "",
+                   callbacks: { label: c => `${c.dataset.label}: ${fmtEur(c.parsed.y)}` } },
+      },
+      scales: { x: gridScale({ grid: { display: false } }),
+                y: gridScale({ ticks: { callback: v => "€" + (v / 1000).toFixed(0) + "k" } }) },
+    },
+  });
+
+  document.getElementById("penWarning").innerHTML =
+    `At ${fmtEur(result.monthly)} a month for ${result.years} years you would pay in ` +
+    `<strong>${fmtEur(result.paidIn)}</strong> and the median outcome is <strong>${fmtEur(result.median)}</strong> ` +
+    `(bad case ${fmtEur(result.p05)}, good case ${fmtEur(result.p95)}).<br><br>` +
+    `Drift is an assumption — ${(RISK_FREE * 100).toFixed(1)}% cash plus beta ${fmtNum(result.beta)} × ${(EQUITY_RISK_PREMIUM * 100).toFixed(1)}% ` +
+    `= ${fmtPct(result.target * 100)} a year, before scheme charges, which this does not model. ` +
+    `Contributions are assumed flat in cash terms, so anything tied to a rising salary is understated ` +
+    `while the effect of inflation on the end figure is not shown at all: ${fmtEur(result.median)} in ` +
+    `${result.years} years is worth far less than ${fmtEur(result.median)} today.`;
+
+  // Contributions in, by month and source.
+  const byMonth = {};
+  for (const c of data.contributions || []) {
+    const key = c.date.slice(0, 7);
+    byMonth[key] = byMonth[key] || { employee: 0, employer: 0, other: 0 };
+    const bucket = c.source === "employee" ? "employee"
+                 : c.source === "employer" ? "employer" : "other";
+    byMonth[key][bucket] += c.amount_eur;
+  }
+  const months = Object.keys(byMonth).sort();
+  chart("chartPenContrib", {
+    type: "bar",
+    data: {
+      labels: months,
+      datasets: [
+        { label: "Employer", data: months.map(m => byMonth[m].employer), backgroundColor: "#14527A" },
+        { label: "You", data: months.map(m => byMonth[m].employee), backgroundColor: "#2A9D9F" },
+      ],
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10 } },
+        datalabels: { display: false },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtEur(c.parsed.y)}` } } },
+      scales: { x: gridScale({ stacked: true, grid: { display: false } }),
+                y: gridScale({ stacked: true, ticks: { callback: v => "€" + v } }) },
+    },
+  });
+
+  const funded = (data.holdings || []).filter(h => h.value_eur > 0);
+  donut("chartPenSplit", funded.map(h => [h.name.replace(/ Fund.*| D Accumulating.*/, ""), h.value_eur]));
+  document.getElementById("penProxyNote").textContent = data.proxyNote ||
+    "Scheme funds are unlisted, so the simulation's shape is proxied by listed trackers with the same mandate. The pot value is the statement's.";
+}
+
+/* ---------------- explore ---------------- */
+
+async function renderExplore(ticker) {
+  const box = document.getElementById("exploreBox");
+  const input = document.getElementById("exploreTicker");
+  const symbol = (ticker || input.value || "").trim().toUpperCase();
+  if (!symbol) {
+    box.innerHTML = "";
+    box.append(el("p", { class: "muted" },
+      "Type a ticker. Anything in the return matrix is instant; anything else is fetched live through the API."));
+    return;
+  }
+
+  box.innerHTML = "";
+  const { tickers, weights, value } = currentWeights();
+  const mine = statsFor(tickers, weights, value);
+  const allocation = parseFloat(document.getElementById("exploreWeight").value) / 100;
+
+  let local = columnFor(symbol);
+  let profile = null;
+  if (!local || true) {
+    try {
+      const response = await fetch(`/api/quote?ticker=${encodeURIComponent(symbol)}`);
+      if (response.ok) profile = await response.json();
+    } catch (e) { /* offline: fall back to what the build shipped */ }
+  }
+  if (!local && !(profile && profile.returns)) {
+    box.append(el("div", { class: "warnbox" },
+      `No price history for ${symbol}. Either the ticker is wrong, or it is not on Yahoo under that symbol — cross-listed ETFs are the usual culprit (EIMI.AS returns nothing while EIMI.L works).`));
+    return;
+  }
+
+  // Splice a fetched series into the matrix so every existing calculation
+  // works on it unchanged.
+  if (!local && profile && profile.returns) {
+    const map = new Map(profile.returns.dates.map((d, i) => [d, profile.returns.values[i]]));
+    DATA.returns.series[symbol] = DATA.returns.dates.map(d => map.has(d) ? map.get(d) : null);
+    local = DATA.returns.series[symbol];
+  }
+
+  const window_ = new Set(mine.index);
+  const solo = statsFor([symbol], [1], value, window_);
+  const held = holdings.find(h => h.ticker === symbol);
+
+  const cards = el("div", { class: "kpis" });
+  const facts = [
+    ["Name", (profile && profile.name) || symbol, (profile && profile.sector) || ""],
+    ["Price", profile && profile.price ? `${profile.currency || ""} ${fmtNum(profile.price)}` : "–",
+     profile && profile.country ? profile.country : ""],
+    ["Volatility", solo ? fmtPct(solo.vol) : "–", "over your book's window"],
+    ["Return p.a.", solo ? fmtPct(solo.cagr) : "–", "same window"],
+    ["Correlation to your book", solo ? fmtNum(correlation(solo.series, mine.series)) : "–",
+     "1.00 means no diversification"],
+    ["You hold", held ? fmtEur(held.value) : "nothing", held ? fmtPct(100 * held.value / value) : "not in this book"],
+  ];
+  for (const [k, v, s] of facts) {
+    cards.append(el("div", { class: "kpi" }, el("div", { class: "k" }, k),
+      el("div", { class: "v", style: String(v).length > 16 ? "font-size:15px" : "" }, v),
+      el("div", { class: "s" }, s)));
+  }
+  box.append(cards);
+
+  if (profile && (profile.pe || profile.marketCap || profile.dividendYield)) {
+    const rows = [
+      ["Market cap", profile.marketCap ? fmtEur(profile.marketCap) : "–"],
+      ["P/E", profile.pe ? fmtNum(profile.pe) : "–"],
+      ["Dividend yield", profile.dividendYield ? fmtPct(profile.dividendYield * 100) : "–"],
+      ["52-week range", profile.low52 && profile.high52
+        ? `${fmtNum(profile.low52)} – ${fmtNum(profile.high52)}` : "–"],
+    ];
+    box.append(el("div", { class: "panel wide", style: "margin-top:20px" },
+      el("h3", {}, "Fundamentals"),
+      el("div", { class: "body" }, table(["", ""], rows.map(r => ({ cells: r })), { numFrom: 1 }))));
+  }
+
+  // What buying it would do, and what the sizer suggests.
+  const after = statsFor([...tickers, symbol],
+    [...weights.map(w => w * (1 - allocation)), allocation], value, window_);
+  const impact = el("div", { class: "panel wide", style: "margin-top:20px" },
+    el("h3", {}, `Buying it at ${(allocation * 100).toFixed(0)}%`));
+  const impactBody = el("div", { class: "body" });
+  if (after) {
+    impactBody.append(table(["", "Now", `With ${symbol}`, "Change"], [
+      { cells: ["Volatility", fmtPct(mine.vol), fmtPct(after.vol),
+        { text: signed(after.vol - mine.vol) + "pp", cls: after.vol < mine.vol ? "pos" : "neg" }] },
+      { cells: ["Beta", fmtNum(mine.beta), fmtNum(after.beta), signed(after.beta - mine.beta)] },
+      { cells: ["Worst drawdown", fmtPct(mine.maxDrawdown), fmtPct(after.maxDrawdown),
+        signed(after.maxDrawdown - mine.maxDrawdown) + "pp"] },
+      { cells: ["Sharpe", fmtNum(mine.sharpe), fmtNum(after.sharpe), signed(after.sharpe - mine.sharpe)] },
+    ], { numFrom: 1 }));
+  }
+  const budgets = view().advice.budgets;
+  const suggestion = sizeLocally({
+    side: "buy", conviction: 6, price: (profile && profile.price) || 0,
+    currentWeight: held ? held.value / value : 0, speculative: false,
+  }, budgets);
+  impactBody.append(el("p", { class: "note muted", style: "padding-top:12px" },
+    `At conviction 6 the sizer suggests ${fmtEur(suggestion.euros)}` +
+    (suggestion.shares ? ` — about ${suggestion.shares} shares` : "") +
+    `, from a ${fmtEur(budgets.monthlyBuyCashEur)} monthly budget against a ${budgets.maxNameWeightPct}% single-name cap. ` +
+    (suggestion.flag || "") + " Set conviction yourself on the Advice tab."));
+  impact.append(impactBody);
+  box.append(impact);
 }

@@ -256,21 +256,63 @@ def rank_additions(
     ]
 
 
-def projection(portfolio: pd.Series, value: float, seed: int = 7) -> dict:
-    """Ten-year Monte Carlo on the book, bootstrapped from its own returns
-    so the fat tails it actually has survive into the fan."""
+#: A long-run forward assumption, used instead of whatever the sample did.
+#: EUR cash rate and a standard equity risk premium; both are assumptions and
+#: are labelled as such on screen rather than presented as measurements.
+RISK_FREE = 0.025
+EQUITY_RISK_PREMIUM = 0.045
+
+
+def expected_return(beta: float) -> float:
+    """CAPM: the return you can defend asking for, given the risk taken.
+
+    The alternative - projecting whatever the sample happened to deliver -
+    is what makes these charts lie. A book measured across sixteen bullish
+    months annualises near 50%, and compounding 50% for a decade produces a
+    number no asset class has ever sustained. Nothing about the past sixteen
+    months entitles the next ten years to repeat them.
+    """
+    return RISK_FREE + max(0.0, beta) * EQUITY_RISK_PREMIUM
+
+
+def projection(portfolio: pd.Series, value: float, beta: float = 1.0,
+               seed: int = 7) -> dict:
+    """Ten-year Monte Carlo on the book.
+
+    Two halves, deliberately taken from different places. The *shape* -
+    fat tails, volatility clustering - is bootstrapped from the book's own
+    daily returns, because that is what the book actually does. The *drift*
+    is a forward assumption, because the sample's drift is not a forecast.
+
+    Resampled returns are shifted so they centre on the assumption rather
+    than on the sample mean, which keeps the distribution's shape and moves
+    only its centre.
+    """
     daily = portfolio.dropna().to_numpy()
-    mu = float(daily.mean() * 252)
+    sample_mu = float(daily.mean() * 252)
     sigma = float(daily.std(ddof=1) * np.sqrt(252))
-    result = simulate(value, mu, sigma, engine="bootstrap", daily_returns=daily,
-                      seed=seed, n_paths=20_000)
+    target = expected_return(beta)
+
+    shifted = daily - (sample_mu - target) / 252
+    result = simulate(value, target, sigma, engine="bootstrap",
+                      daily_returns=shifted, seed=seed, n_paths=20_000)
+
     payload = result.as_dict()
     payload["sample_years"] = round(len(daily) / 252, 2)
+    payload["sample_return"] = round(sample_mu, 4)
+    payload["assumed_return"] = round(target, 4)
+    payload["beta"] = round(beta, 2)
+    payload["basis"] = (
+        f"Drift is a forward assumption, not the sample: {RISK_FREE:.1%} cash "
+        f"plus beta {beta:.2f} x {EQUITY_RISK_PREMIUM:.1%} equity risk premium "
+        f"= {target:.1%} a year. The book's own {len(daily) / 252:.1f} years "
+        f"annualise to {sample_mu:.0%}, which is a bull market being mistaken "
+        f"for an expected return."
+    )
     payload["warning"] = (
-        f"Drift is resampled from this book's own {len(daily) / 252:.1f} years of "
-        f"history, which annualise to {mu:.1%}. That is an extrapolation of the "
-        "sample, not a forecast: a book whose comparable history is short and "
-        "bullish will project a median that no asset class has ever delivered. "
-        "Read the spread, not the level."
+        f"The spread comes from resampling this book's own returns, and those "
+        f"{len(daily) / 252:.1f} years contain no 2008 and no 2020. The worst "
+        "case shown is therefore optimistic: the sample has no true crash in "
+        "it to resample from."
     )
     return payload

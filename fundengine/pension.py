@@ -54,10 +54,12 @@ class Pension:
     holdings: list = field(default_factory=list)
     contributions: list = field(default_factory=list)
     updated: str = ""
+    contribution_override: float | None = None
 
     def as_dict(self) -> dict:
         return {"holdings": self.holdings, "contributions": self.contributions,
-                "updated": self.updated}
+                "updated": self.updated,
+                "contribution_override": self.contribution_override}
 
 
 def load(path: Path = STORE) -> Pension:
@@ -69,7 +71,8 @@ def load(path: Path = STORE) -> Pension:
         return Pension()
     return Pension(holdings=blob.get("holdings", []),
                    contributions=blob.get("contributions", []),
-                   updated=blob.get("updated", ""))
+                   updated=blob.get("updated", ""),
+                   contribution_override=blob.get("contribution_override"))
 
 
 def save(pension: Pension, path: Path = STORE) -> Pension:
@@ -152,6 +155,7 @@ def summary(pension: Pension | None = None, path: Path = STORE) -> dict:
         "bySource": {k: round(v, 2) for k, v in by_source.items()},
         "holdings": pension.holdings,
         "contributions": pension.contributions,
+        "contributionOverride": pension.contribution_override,
         "pricedCount": len(priced),
         "unpricedCount": len(pension.holdings) - len(priced),
         "updated": pension.updated,
@@ -178,3 +182,88 @@ def as_holdings(pension: Pension | None = None, path: Path = STORE) -> list:
             portfolio=BOOK,
         ))
     return out
+
+
+def set_contribution_override(amount: float | None, path: Path = STORE) -> Pension:
+    """Pin the monthly contribution rate, or clear it to go back to the average.
+
+    Contributions track salary, so a raise or a change in employer rate makes
+    the trailing average wrong for everything ahead of it. The override says
+    what to project with from here; the history keeps what actually happened.
+    """
+    pension = load(path)
+    if amount is None:
+        pension.contribution_override = None
+    else:
+        amount = float(amount)
+        if amount < 0:
+            raise ValueError("a contribution rate cannot be negative")
+        pension.contribution_override = round(amount, 2)
+    return save(pension, path)
+
+
+def recent_monthly(summary_: dict, months: int = 6) -> float:
+    """Average monthly contribution over the last `months` of the history.
+
+    An explicit override wins: after a pay rise the trailing average is a
+    record of the old salary, not a rate to project forward.
+
+    Averaged rather than taken from the newest entry, because employer and
+    employee amounts land as separate rows on the same day and some months
+    carry a catch-up. The early months of a scheme also include the opening
+    transfer, which is not a monthly rate and would flatter a projection.
+    """
+    override = summary_.get("contributionOverride")
+    if override:
+        return float(override)
+    contributions = summary_.get("contributions") or []
+    if not contributions:
+        return 0.0
+    by_month: dict[str, float] = {}
+    for row in contributions:
+        key = row["date"][:7]
+        by_month[key] = by_month.get(key, 0.0) + float(row.get("amount_eur") or 0)
+    recent = [v for _, v in sorted(by_month.items())[-months:]]
+    return round(sum(recent) / len(recent), 2) if recent else 0.0
+
+
+def accrue(summary_: dict, as_of: date | None = None) -> dict:
+    """Add the contributions expected since the last statement.
+
+    Contributions land monthly, but a statement is only as fresh as the day
+    it was downloaded. Between statements the pot shown would otherwise
+    drift steadily below reality - by a full month's pay every month, which
+    on this scheme is over four hundred euro.
+
+    Accrued months are estimates and are labelled as such: they assume the
+    contribution rate holds and they credit no investment growth, so the
+    estimate is deliberately the conservative one. The next real statement
+    replaces them, because `set_holdings` overwrites rather than appends.
+    """
+    contributions = summary_.get("contributions") or []
+    monthly = recent_monthly(summary_)
+    if not contributions or monthly <= 0:
+        return {**summary_, "accruedMonths": 0, "accrued": 0.0,
+                "estimatedTotal": summary_.get("total", 0.0)}
+
+    as_of = as_of or date.today()
+    last = date.fromisoformat(max(c["date"] for c in contributions))
+    months = (as_of.year - last.year) * 12 + (as_of.month - last.month)
+    # Only whole months that have actually come round since the last one.
+    months = max(0, months)
+
+    accrued = round(monthly * months, 2)
+    return {
+        **summary_,
+        "lastStatement": last.isoformat(),
+        "monthlyRate": monthly,
+        "accruedMonths": months,
+        "accrued": accrued,
+        "estimatedTotal": round(summary_.get("total", 0.0) + accrued, 2),
+        "accrualNote": (
+            f"{months} month(s) since the {last.isoformat()} statement at "
+            f"EUR {monthly:,.0f} a month, added as an estimate. No growth is "
+            f"credited on it, so this understates rather than flatters. "
+            f"Import the next WTW statement to replace the estimate."
+        ) if months else "",
+    }

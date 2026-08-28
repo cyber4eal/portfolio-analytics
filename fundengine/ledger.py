@@ -147,3 +147,53 @@ def summary(trades: list[dict], portfolio: str | None = None) -> dict:
         "last": rows[-1]["date"] if rows else None,
         "positions": book,
     }
+
+
+def reconcile(trades: list[dict], holdings: list[dict],
+              portfolio: str | None = None) -> dict:
+    """Compare what the ledger says you hold against what the sheet says.
+
+    The ledger starts whenever you began importing statements, so it will
+    not cover a position bought before that or through a broker whose
+    statement has not been loaded. Those positions have no cost basis, and
+    saying so is more useful than showing a confident wrong number.
+
+    A mismatch is not necessarily an error either - it usually means a
+    statement is missing - so the two cases are reported separately.
+    """
+    book = positions(trades, portfolio)
+    by_ticker = {h["ticker"]: h for h in holdings if h.get("tradable")}
+
+    matched, mismatched, unknown, closed = [], [], [], []
+    for ticker, held in by_ticker.items():
+        row = book.get(ticker)
+        if not row or row["shares"] <= 0:
+            unknown.append({"ticker": ticker, "name": held.get("name", ticker),
+                            "shares": held.get("shares", 0),
+                            "value_eur": held.get("value_eur", 0)})
+            continue
+        difference = row["shares"] - float(held.get("shares") or 0)
+        entry = {
+            "ticker": ticker, "name": held.get("name", ticker),
+            "ledgerShares": round(row["shares"], 4),
+            "sheetShares": round(float(held.get("shares") or 0), 4),
+            "difference": round(difference, 4),
+            "avgCost": row["avg_cost"], "cost": row["cost"],
+            "value_eur": held.get("value_eur", 0),
+        }
+        (matched if abs(difference) < 0.01 else mismatched).append(entry)
+
+    for ticker, row in book.items():
+        if ticker not in by_ticker and abs(row["shares"]) < 0.01 and row["trades"]:
+            closed.append({"ticker": ticker, "realised": row["realised"],
+                           "trades": row["trades"]})
+
+    covered = sum(e["value_eur"] for e in matched)
+    total = sum(h.get("value_eur", 0) for h in by_ticker.values()) or 1
+    return {
+        "matched": sorted(matched, key=lambda e: -e["value_eur"]),
+        "mismatched": sorted(mismatched, key=lambda e: -abs(e["difference"])),
+        "unknownBasis": sorted(unknown, key=lambda e: -e["value_eur"]),
+        "closed": sorted(closed, key=lambda e: -abs(e["realised"])),
+        "coveragePct": round(100 * covered / total, 1),
+    }
