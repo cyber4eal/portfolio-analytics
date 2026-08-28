@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import actions, advice, combo, goals, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
+from . import actions, advice, brokers, combo, goals, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -348,6 +348,9 @@ def build(agent_dir: str, allocation: float = 0.10,
                 positions={h.ticker: {"shares": h.shares, "value_eur": h.value_eur}
                            for h in rows if h.tradable},
                 whole_shares=True,
+                location=brokers.locate(
+                    all_trades,
+                    None if name in (book.COMBINED,) else name),
             )
         except ValueError as exc:
             print(f"  {name}: optimisation skipped ({exc})")
@@ -425,6 +428,8 @@ def build(agent_dir: str, allocation: float = 0.10,
             for target in (100_000.0, 250_000.0, 1_000_000.0)
         ],
         "wrappers": wrappers,
+        "brokers": {n: {"fractional": b.fractional, "note": b.note}
+                    for n, b in brokers.BROKERS.items()},
         "taxMode": TAX_MODE,
         "taxHorizon": TAX_HORIZON,
         "taxComparison": irish_tax.compare(0.07, TAX_HORIZON, 10_000),

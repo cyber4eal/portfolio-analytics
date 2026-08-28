@@ -2846,7 +2846,7 @@ function renderOrders() {
     currency === "USD" ? "$" + value.toFixed(2) : fmtEur(value);
 
   box.append(table(
-    ["When", "Order", "Holding", "Amount", "Limit price", "If unfilled", "Costs to wait"],
+    ["When", "Order", "Holding", "Where", "Amount", "Limit price", "If unfilled", "Costs to wait"],
     orders.map(o => ({
       cls: o.skipped ? "muted" : "",
       cells: [
@@ -2856,6 +2856,14 @@ function renderOrders() {
             o.skipped ? "—"
             : `${o.side === "sell" ? "SELL" : "BUY"} ${o.shares ? Math.round(o.shares) : ""}`) },
         named(o.ticker),
+        { node: el("span", {},
+            el("strong", {}, o.broker || "unknown"),
+            o.brokerSaving > 0
+              ? el("div", { class: "muted", style: "font-size:11.5px" },
+                  `saves ${fmtEur(o.brokerSaving)}`)
+              : (o.brokerSplit && o.brokerSplit.length > 1
+                  ? el("div", { class: "muted", style: "font-size:11.5px" }, "split — 2 orders")
+                  : null)) },
         o.euros ? fmtEur(o.euros) : "–",
         // The broker quotes a US line in dollars, so that is the number
         // typed into the ticket; the euro figure is for reconciling here.
@@ -2890,6 +2898,8 @@ function renderOrders() {
           `${money(o.nativeLimit ?? o.limit, o.currency)}` +
           (o.currency === "USD" ? ` (${fmtEur(o.limit)})` : "") + `. ${o.rationale}` : ""),
       o.rounding ? el("div", { style: "font-size:13px;margin-top:6px;color:#B07C1F" }, o.rounding) : null,
+      o.brokerWhy ? el("div", { class: "muted", style: "font-size:13px;margin-top:6px" },
+        el("strong", {}, (o.broker || "Venue unknown") + ". "), o.brokerWhy) : null,
       el("div", { class: "muted", style: "font-size:13px;margin-top:6px" }, o.deadlineReason || "")));
   }
   box.append(detail);
@@ -2908,6 +2918,10 @@ function renderOrders() {
       : "") +
     `Leaving the whole plan undone costs about <strong>${fmtEur(totalCost)} a month</strong> in foregone ` +
     `compounding — that figure, not a colour, is what "urgent" means here.<br><br>` +
+    `Each order names the account. A sell can only happen where the shares are — and AMZN, NVDA and TSLA sit ` +
+    `across both, so those are two orders rather than one. A buy goes wherever it is cheapest, which on these ` +
+    `sizes is always the commission-free account: a ${fmtEur(15)} minimum is 4.3% of a ${fmtEur(342)} trade ` +
+    `and nothing at all next to 0.15% conversion.<br><br>` +
     `Sizes are whole shares and a sell is the whole position, because fractions cannot be traded in these ` +
     `accounts. That is not a rounding detail: an instruction to trim 62% of a holding cannot be placed, so ` +
     `the numbers here are the ones that can — with whatever they leave in cash stated on the order.<br><br>` +

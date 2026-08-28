@@ -115,7 +115,8 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
           free_sells: int = 5, goal_date: str | None = None,
           today: date | None = None,
           currencies: dict | None = None, fx: float | None = None,
-          positions: dict | None = None, whole_shares: bool = True) -> list[dict]:
+          positions: dict | None = None, whole_shares: bool = True,
+          location: dict | None = None) -> list[dict]:
     """Turn the rebalance plan into dated, priced orders.
 
     Prices come in as EUR, because everything else in this project is
@@ -147,8 +148,11 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
     # it proportional to the money it moves.
     total = sum(t["euros"] for t in trades) or 1.0
 
+    from . import brokers as _brokers
+
     currencies = currencies or {}
     positions = positions or {}
+    location = location or {}
     for trade in trades:
         ticker = trade["ticker"]
         price = prices.get(ticker)
@@ -158,12 +162,37 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
 
         wanted_euros = trade["euros"]
         rounding = None
+        # Where the order goes. A sell can only happen where the shares
+        # are; a buy should go wherever it is cheapest.
+        routing = (_brokers.route_sell(ticker, wanted_euros, location, price)
+                   if trade["side"] == "sell"
+                   else _brokers.route_buy(wanted_euros, currency))
+        # Trading 212's own history shows fractional fills, so the venue
+        # can do them - but Catalin has said these accounts cannot, and a
+        # stated constraint beats an inferred capability. `whole_shares`
+        # therefore overrides the venue rather than deferring to it.
+        venue = routing.get("broker")
+        allows_fractions = bool(
+            venue and _brokers.BROKERS[venue].fractional) and not whole_shares
         if whole_shares and price:
             if trade["side"] == "sell":
                 # All or nothing: the position cannot be split.
                 held = positions.get(ticker, {})
                 shares = float(held.get("shares") or 0)
                 value = float(held.get("value_eur") or 0)
+                # The ledger only knows what has been imported. If it
+                # accounts for fewer shares than the sheet says you hold,
+                # the rest are somewhere the statements have not covered -
+                # which is a thing to resolve before placing the order, not
+                # after.
+                located = sum((routing.get("split") or [{}])[i].get("shares", 0)
+                              for i in range(len(routing.get("split") or [])))
+                if shares and located and located < shares - 0.01:
+                    routing = dict(routing, why=(
+                        f"The ledger accounts for {located:,.4g} of the {shares:,.4g} "
+                        f"shares held. The remainder was bought through a statement "
+                        f"that has not been imported - check both accounts before "
+                        f"placing this. " + routing.get("why", "")))
                 if shares > 0 and value > 0:
                     if value > wanted_euros * 1.6:
                         # Selling the lot would overshoot badly. Say so
@@ -248,6 +277,12 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
             "costPerMonth": round(monthly_cost, 2),
             "rounding": rounding,
             "wantedEuros": round(wanted_euros, 2),
+            "broker": routing.get("broker"),
+            "brokerWhy": routing.get("why"),
+            "brokerSplit": routing.get("split"),
+            "brokerCost": routing.get("cost"),
+            "brokerSaving": routing.get("saving"),
+            "fractionalOk": allows_fractions,
             "skipped": False,
             "urgency": _urgency(monthly_cost, over_cap, days_left),
             "overCap": over_cap,

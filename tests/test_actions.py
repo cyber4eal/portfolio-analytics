@@ -198,3 +198,71 @@ def test_a_euro_line_is_left_alone():
     buy = next(o for o in out if o["ticker"] == "CSPX.AS")
     assert buy["nativeLimit"] == pytest.approx(buy["limit"])
     assert buy["fx"] is None
+
+
+# ---------------- broker routing ----------------
+
+LEDGER = [
+    {"ticker": "IEMG", "action": "buy", "shares": 38, "portfolio": "Catalin",
+     "note": "Trading 212 buy - market"},
+    {"ticker": "AMZN", "action": "buy", "shares": 7, "portfolio": "Catalin",
+     "note": "Trading 212 buy - market"},
+    {"ticker": "AMZN", "action": "buy", "shares": 1, "portfolio": "Catalin",
+     "note": "Davy 25G25767"},
+    {"ticker": "TSLA", "action": "buy", "shares": 5, "portfolio": "Catalin",
+     "note": "Davy 25H41501"},
+]
+
+
+def test_shares_are_located_from_the_imported_statements():
+    from fundengine import brokers
+    where = brokers.locate(LEDGER, "Catalin")
+    assert where["IEMG"] == {"Trading 212": 38}
+    assert where["AMZN"] == {"Trading 212": 7, "Davy": 1}
+
+
+def test_a_split_position_is_two_orders():
+    from fundengine import brokers
+    routed = brokers.route_sell("AMZN", 1_840, brokers.locate(LEDGER, "Catalin"))
+    assert len(routed["split"]) == 2
+    assert "two orders" in routed["why"]
+
+
+def test_a_holding_with_no_history_says_so_rather_than_guessing():
+    from fundengine import brokers
+    routed = brokers.route_sell("AEM", 350, brokers.locate(LEDGER, "Catalin"))
+    assert routed["broker"] is None
+    assert "not" in routed["why"] and "known" in routed["why"]
+
+
+def test_a_buy_goes_to_the_cheaper_venue():
+    from fundengine import brokers
+    routed = brokers.route_buy(342, "EUR")
+    assert routed["broker"] == brokers.TRADING212
+    assert routed["cost"] == 0
+    assert routed["saving"] == pytest.approx(14.99)
+
+
+def test_the_minimum_commission_is_what_makes_small_trades_expensive():
+    from fundengine import brokers
+    small = brokers.route_buy(342, "EUR")["saving"]
+    large = brokers.route_buy(10_000, "EUR")["saving"]
+    assert large > small                       # 0.5% of 10k beats the floor
+    assert "4.4%" in brokers.route_buy(342, "EUR")["why"]
+
+
+def test_conversion_is_charged_only_on_a_non_euro_line():
+    from fundengine import brokers
+    assert brokers.cost_at(brokers.TRADING212, 1_000, "EUR") == 0
+    assert brokers.cost_at(brokers.TRADING212, 1_000, "USD") == pytest.approx(1.5)
+
+
+def test_a_stated_constraint_beats_an_inferred_capability():
+    """Trading 212 fills fractions in the history, but Catalin has said these
+    accounts cannot, so whole_shares wins."""
+    out = actions.build(PLAN, PRICES, VOLS, WEIGHTS, 4.8, today=TODAY,
+                        positions=POSITIONS, whole_shares=True,
+                        location={"IEMG": {"Trading 212": 38}})
+    buy = next(o for o in out if o["side"] == "buy")
+    assert buy["shares"] == int(buy["shares"])
+    assert buy["fractionalOk"] is False
