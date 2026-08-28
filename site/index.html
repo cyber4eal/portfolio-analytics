@@ -10,6 +10,7 @@
 <script src="vendor/topojson.min.js"></script>
 <script src="cube.js"></script>
 <script src="celebrate.js"></script>
+<script src="escape.js"></script>
 <style>
 :root{
   --ink:#1C1C1E; --slate:#5B5B62; --paper:#FFFFFF; --mist:#F6F5F3;
@@ -198,6 +199,16 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
 @media (prefers-reduced-motion:reduce){
   .toast,.toast.out{animation:none}
 }
+.btn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.escape-controls{display:flex;flex-wrap:wrap;gap:18px;align-items:center;
+  background:var(--mist);border:1px solid var(--line);padding:14px 16px;margin-bottom:18px}
+.escape-controls .grp{display:flex;flex-direction:column;gap:6px;min-width:210px}
+.escape-controls label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--slate)}
+.escape-controls .val{font-size:13.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.escape-controls input[type=range]{width:100%}
+.escape-controls .btns{display:flex;flex-wrap:wrap;gap:6px}
+.numin{padding:6px 9px;border:1px solid var(--line);background:var(--paper);color:var(--ink);
+  font:inherit;font-size:13.5px;width:120px;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -569,6 +580,99 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <input type="range" id="exploreWeight" min="1" max="25" step="1" value="5"><strong id="exploreWeightLabel">5%</strong>
     </div>
     <div id="exploreBox"></div>
+  </section>
+
+  <section class="view" id="view-escape">
+    <div class="section-head">
+      <h2>Escape velocity</h2>
+      <p>Every other tab answers how this money should be arranged. This one answers whether the arrangement can possibly get you where you said you were going &mdash; and if not, what can. It is the least flattering page here on purpose: a target is the one input nobody sanity-checks, and a goal that is merely ambitious looks identical to one that is arithmetically impossible until the required rate is written next to the best records that exist.</p>
+    </div>
+
+    <div class="escape-controls">
+      <div class="grp" style="min-width:100%">
+        <label>Target</label>
+        <div class="btns" id="escapeTargets"></div>
+      </div>
+      <div class="grp">
+        <label>Horizon</label>
+        <input type="range" id="escapeYears" min="3" max="40" step="1" value="10">
+        <div class="val" id="escapeYearsLabel"></div>
+      </div>
+      <div class="grp">
+        <label>Saved each month</label>
+        <input type="range" id="escapeMonthly" min="0" max="5000" step="50" value="400">
+        <div class="val" id="escapeMonthlyLabel"></div>
+      </div>
+    </div>
+
+    <div class="panels">
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>What the target requires</h3>
+        <div class="body">
+          <div id="escapeHead"></div>
+          <div class="chartbox tall" style="margin-top:18px"><canvas id="chartRequirement"></canvas></div>
+        </div>
+        <p class="note" id="requirementNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>What each rate in history would cost you</h3>
+        <div class="body">
+          <p class="hint">Every row is a real track record, net of fees, over the stretch named. The columns are the two honest ways to close a gap: put more in, or wait longer.</p>
+          <div class="tablewrap" id="costTable"></div>
+        </div>
+        <p class="note" id="costNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Where the money actually comes from</h3>
+        <div class="body"><div class="chartbox tall"><canvas id="chartSources"></canvas></div></div>
+        <p class="note" id="sourcesNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Backing companies &mdash; the power law, priced</h3>
+        <div class="body">
+          <p class="hint">The first route with a genuinely fat right tail. Outcome shape taken from Correlation Ventures' study of 21,000 investments 2004&ndash;2013 and 27,000 more 2009&ndash;2018 &mdash; not from a pitch deck.</p>
+          <div class="escape-controls">
+            <div class="grp"><label>Into venture each year</label>
+              <input class="numin" type="number" id="ventureStake" value="2000" min="0" step="500"></div>
+            <div class="grp"><label>Spread across this many deals</label>
+              <input class="numin" type="number" id="ventureDeals" value="4" min="1" max="50" step="1"></div>
+          </div>
+          <div id="ventureBox"></div>
+          <div class="chartbox" style="margin-top:18px"><canvas id="chartVenture"></canvas></div>
+        </div>
+        <p class="note" id="ventureNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Owning one &mdash; where the billionaires actually come from</h3>
+        <div class="body">
+          <p class="hint">Two thirds of billionaire wealth is equity in a business the person built or controls. The difference between this panel and the one above is not courage or conviction; it is the ownership percentage.</p>
+          <div class="escape-controls">
+            <div class="grp"><label>Your stake at exit, after dilution (%)</label>
+              <input class="numin" type="number" id="founderStake" value="15" min="0" max="100" step="1"></div>
+          </div>
+          <div id="founderBox"></div>
+        </div>
+        <p class="note" id="founderNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Leverage, and where it stops working</h3>
+        <div class="body">
+          <p class="hint">The obvious shortcut, and the reason it is not one. Borrowing multiplies the return in proportion and the drag by the square, so growth turns over at a point this book's own numbers decide.</p>
+          <div class="chartbox tall"><canvas id="chartLeverage"></canvas></div>
+        </div>
+        <p class="note" id="leverageNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>The verdict</h3>
+        <div class="body"><div id="verdictBox"></div></div>
+      </div>
+    </div>
   </section>
 
   <section class="view" id="view-stress">
