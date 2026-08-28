@@ -67,7 +67,9 @@ def shrink_covariance(sample: np.ndarray, intensity: float = 0.3) -> np.ndarray:
 
 
 def capm_returns(returns: pd.DataFrame, benchmark: pd.Series,
-                 costs: dict[str, float] | None = None) -> pd.Series:
+                 costs: dict[str, float] | None = None,
+                 wrappers: dict[str, str] | None = None,
+                 horizon: float | None = None) -> pd.Series:
     """Expected return per asset from its beta to the benchmark, net of fees.
 
     The netting matters and is easy to get wrong in both directions.
@@ -92,7 +94,17 @@ def capm_returns(returns: pd.DataFrame, benchmark: pd.Series,
         series = aligned[column].to_numpy()
         beta = float(np.cov(series, market, ddof=1)[0, 1] / variance) if variance else 1.0
         gross = RISK_FREE + max(-0.5, beta) * EQUITY_RISK_PREMIUM
-        out[column] = gross - (costs or {}).get(column, 0.0)
+        net = gross - (costs or {}).get(column, 0.0)
+        if wrappers and horizon:
+            # Tax is not a haircut applied afterwards - it changes which
+            # asset is better. An ETF's deemed disposal every eight years
+            # takes tax out of the compounding base three times over a
+            # long horizon, while a share defers the whole charge to the
+            # day you sell. Optimising pre-tax recommends the ETF.
+            from . import irish_tax
+            net = irish_tax.after_tax(
+                wrappers.get(column, irish_tax.SHARE), net, horizon)
+        out[column] = net
     return pd.Series(out)
 
 
@@ -248,7 +260,9 @@ def describe(w: np.ndarray, mu: np.ndarray, sigma: np.ndarray) -> dict:
 
 def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
           candidates: pd.DataFrame | None = None, cap: float = 0.25,
-          costs: dict[str, float] | None = None) -> dict:
+          costs: dict[str, float] | None = None,
+          wrappers: dict[str, str] | None = None,
+          horizon: float | None = None) -> dict:
     """Run every theory over the holdings, optionally plus candidate funds.
 
     `costs` is the annual ongoing charge per ticker, subtracted from each
@@ -264,7 +278,8 @@ def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
 
     names = list(aligned.columns)
     sigma = shrink_covariance(ewma_cov(aligned).to_numpy())
-    mu = capm_returns(aligned, benchmark, costs).reindex(names).to_numpy()
+    mu = capm_returns(aligned, benchmark, costs, wrappers,
+                      horizon).reindex(names).to_numpy()
 
     current = np.array([weights.get(name, 0.0) for name in names], dtype=float)
     if current.sum() <= 0:
@@ -279,7 +294,8 @@ def build(returns: pd.DataFrame, weights: pd.Series, benchmark: pd.Series,
         "parity": risk_parity(sigma, cap),
     }
 
-    out = {"tickers": names, "cap": cap, "costs": costs or {}, "theories": {}}
+    out = {"tickers": names, "cap": cap, "costs": costs or {},
+           "wrappers": wrappers or {}, "horizon": horizon, "theories": {}}
     for key, w in theories.items():
         stats = describe(w, mu, sigma)
         weights_out = {names[i]: round(float(w[i]) * 100, 2)

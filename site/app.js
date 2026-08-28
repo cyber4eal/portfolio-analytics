@@ -1083,6 +1083,8 @@ function renderDerived() {
   renderAdditions(tickers, weights, value, mine);
   renderFrontier();
   renderStress(mine);
+  renderLevers();
+  renderMilestones();
   renderTheories();
   renderPlan();
   renderHedges();
@@ -2731,4 +2733,84 @@ function splitPie(employee, employer, size = 26) {
   svg.setAttribute("title",
     `You ${employee.toFixed(0)}, employer ${employer.toFixed(0)}`);
   return svg;
+}
+
+/* ---------------- levers and feasibility ---------------- */
+
+function renderLevers() {
+  const data = DATA.levers;
+  const box = document.getElementById("leverTable");
+  if (!data) return;
+  box.innerHTML = "";
+
+  box.append(table(["Lever", "Change", "Ends at", "Difference", "Why"],
+    data.levers.map(l => ({
+      cls: l.gain > 0 ? "" : "",
+      cells: [
+        { node: el("strong", {}, l.name) },
+        l.change,
+        fmtEur(l.terminal),
+        { text: (l.gain >= 0 ? "+" : "−") + fmtEur(Math.abs(l.gain)).slice(1),
+          cls: l.gain >= 0 ? "pos" : "neg" },
+        { text: l.note, cls: "muted" },
+      ],
+    })), { numFrom: 2 }));
+
+  chart("chartLevers", {
+    type: "bar",
+    data: {
+      labels: data.levers.map(l => l.name),
+      datasets: [{
+        data: data.levers.map(l => l.gain),
+        backgroundColor: data.levers.map(l => l.gain >= 0 ? "#0F7E82" : "#B9002F"),
+      }],
+    },
+    options: {
+      maintainAspectRatio: false, indexAxis: "y",
+      plugins: { legend: { display: false }, datalabels: { display: false },
+        tooltip: { callbacks: { label: c => fmtEur(c.parsed.x) } } },
+      scales: { x: gridScale({ ticks: { callback: v => "€" + (v / 1000).toFixed(0) + "k" } }),
+                y: gridScale({ grid: { display: false } }) },
+    },
+  });
+
+  const top = data.levers[0];
+  document.getElementById("leverNote").innerHTML =
+    `<strong>Over ten years, ${top.name.toLowerCase()} is worth ${fmtEur(top.gain)} — more than every ` +
+    `allocation decision on this page combined.</strong> Contributions are ${data.contributionsShare}% of ` +
+    `the ${fmtEur(data.base)} base case, which is what a small pot looks like: the money you add dominates ` +
+    `the money it earns.<br><br>` +
+    `Returns only overtake a year of saving after <strong>${data.crossoverYears} years</strong>, at about ` +
+    `${fmtEur(data.crossoverValue)}. Before that point, time spent optimising the portfolio is time spent on ` +
+    `the smallest term in the equation — and after it, the habit you built is what got you there.<br><br>` +
+    `Assumes 8% a year, which is roughly what global equities have returned over the long run. Nothing here ` +
+    `is a forecast; it is arithmetic on an assumption, shown so the terms can be compared against each other.`;
+}
+
+function renderMilestones() {
+  const rows = DATA.milestones || [];
+  const box = document.getElementById("milestoneTable");
+  if (!rows.length) return;
+  box.innerHTML = "";
+
+  box.append(table(["Target in 10 years", "Needs", "Multiple of today", "Verdict"],
+    rows.map(m => ({
+      cells: [
+        { node: el("strong", {}, fmtEur(m.target)) },
+        { text: fmtPct1(m.requiredPct),
+          cls: m.requiredPct <= 10 ? "pos" : m.requiredPct <= 20 ? "" : "neg" },
+        `${m.multipleOfStart.toLocaleString("en-IE")}×`,
+        { text: m.verdict, cls: "muted" },
+      ],
+    })), { numFrom: 1 }));
+
+  const reference = rows[0];
+  const benchmarks = (reference.benchmarks || [])
+    .map(b => `${b.name} ${b.rate}%`).join(" · ");
+  document.getElementById("milestoneNote").innerHTML =
+    `For scale: ${benchmarks}. A required return is the one input nobody sanity-checks, and a number that ` +
+    `sounds ambitious looks identical to one that is arithmetically impossible until it is written down next ` +
+    `to what the best investors alive have actually sustained. At a defensible 8% this book reaches ` +
+    `<strong>${fmtEur(reference.atEightPercent)}</strong> in ten years — and the honest way to move that ` +
+    `number is the table above, not a better fund.`;
 }

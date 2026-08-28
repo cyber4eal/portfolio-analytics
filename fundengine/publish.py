@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import advice, combo, goals, ledger, optimise, pension, portfolio as book, prices, profile, scenarios, universe
+from . import advice, combo, goals, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -213,6 +213,25 @@ def build(agent_dir: str, allocation: float = 0.10,
     fund_costs = universe.costs_by_ticker(
         [h.ticker for h in all_holdings if h.tradable])
 
+    # Which tax regime each holding falls under. Everything in the fund
+    # universe is a UCITS ETF and so carries deemed disposal; a directly
+    # held share does not.
+    wrappers = {f.ticker: irish_tax.FUND for f in universe.UNIVERSE}
+    wrappers.update(universe.HELD_FUND_TERS.keys().__iter__().__class__ and
+                    {t: irish_tax.FUND for t in universe.HELD_FUND_TERS})
+    for holding in all_holdings:
+        if holding.tradable and holding.ticker not in wrappers:
+            kind = profiles.get(holding.ticker, {}).get("kind") if "profiles" in dir() else None
+            wrappers[holding.ticker] = irish_tax.classify(holding.ticker, kind)
+    # Tax modelling is off by default, at Catalin's instruction: returns are
+    # treated as tax-free. Kept as a switch rather than deleted, because on a
+    # long horizon the difference is not cosmetic - the same 7% gross over 35
+    # years is EUR 74,833 in shares and EUR 49,720 in an ETF once deemed
+    # disposal is applied. Set TAX_MODE="irish" to see that view.
+    TAX_MODE = os.environ.get("TAX_MODE", "none")
+    TAX_HORIZON = 10.0
+    tax_wrappers = wrappers if TAX_MODE == "irish" else None
+
     print("Reading trend...")
     trends = optimise.trend_signals(closes)
 
@@ -264,7 +283,8 @@ def build(agent_dir: str, allocation: float = 0.10,
             view_series = series
             book_views[name]["optimisation"] = optimise.build(
                 holding_returns.reindex(columns=view_tickers), view_weights,
-                benchmark, candidates=fund_returns, cap=0.25, costs=fund_costs)
+                benchmark, candidates=fund_returns, cap=0.25, costs=fund_costs,
+                wrappers=tax_wrappers, horizon=TAX_HORIZON)
             book_views[name]["hedges"] = optimise.hedges(
                 holding_returns.reindex(columns=view_tickers), view_weights,
                 fund_returns, benchmark, view_series, costs=fund_costs)
@@ -348,6 +368,32 @@ def build(agent_dir: str, allocation: float = 0.10,
         "additions": {"allocation": allocation, "ranked": additions},
         "trends": trends,
         "fundCosts": fund_costs,
+        "levers": levers.rank(
+            tradable_value,
+            advice.MONTHLY_BUY_CASH_EUR,
+            0.08, 10.0,
+            fee_saving=0.005,
+            extra_monthly=200.0,
+            employer_match=sum(
+                p.get("monthlyContribution", 0) for p in pension_pots.values()),
+        ),
+        "feasibility": {
+            horizon: levers.feasibility(tradable_value,
+                                        advice.MONTHLY_BUY_CASH_EUR,
+                                        target, horizon)
+            for horizon, target in ((10.0, 1_000_000_000.0),)
+        },
+        "milestones": [
+            levers.feasibility(tradable_value, advice.MONTHLY_BUY_CASH_EUR,
+                               target, 10.0)
+            for target in (100_000.0, 250_000.0, 1_000_000.0)
+        ],
+        "wrappers": wrappers,
+        "taxMode": TAX_MODE,
+        "taxHorizon": TAX_HORIZON,
+        "taxComparison": irish_tax.compare(0.07, TAX_HORIZON, 10_000),
+        "taxComparisonLong": irish_tax.compare(0.07, 35, 10_000),
+        "pensionVsBrokerage": irish_tax.pension_vs_brokerage(600, 20, 0.07),
         "buyCandidates": advice.buy_candidates(
             additions, [f.as_dict() for f in universe.UNIVERSE], exposure, allocation),
         "ledger": ledger.summary(ledger.read_all()),

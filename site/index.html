@@ -373,6 +373,20 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <p>Mechanical consequences of the numbers, not recommendations. Four theories are run side by side because they optimise different things — where they agree you can be confident, and where they diverge is where the assumptions are doing the work.</p>
     </div>
     <div class="panel wide" style="margin-bottom:20px">
+      <h3>What actually moves the number</h3>
+      <div class="body">
+        <p class="hint">Ranked in euro over ten years, not in percent. Allocation is the part that feels like investing and, at this pot size, close to the least important lever available.</p>
+        <div class="tablewrap" id="leverTable"></div>
+        <div class="chartbox" style="margin-top:18px"><canvas id="chartLevers"></canvas></div>
+      </div>
+      <div class="warnbox" id="leverNote"></div>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>What a target actually requires</h3>
+      <div class="body"><div class="tablewrap" id="milestoneTable"></div></div>
+      <p class="note" id="milestoneNote"></p>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
       <h3>What compounds fastest</h3>
       <div class="body">
         <p class="hint">Money compounds, so what gets maximised is expected <em>log</em> return: <strong>growth ≈ return − volatility²∕2</strong>. That second term is why a lower-returning mix can leave you richer, and why past a point more risk makes you poorer.</p>
