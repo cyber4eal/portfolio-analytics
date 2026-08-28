@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import advice, combo, goals, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
+from . import actions, advice, combo, goals, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -313,6 +313,26 @@ def build(agent_dir: str, allocation: float = 0.10,
             month = book_views[name]["plan"]["thisMonth"]
             book_views[name]["plan"]["tradingCost"] = optimise.trading_cost(
                 month["sells"] + month["buys"], view_rows)
+
+            # Dated, priced orders rather than a target allocation.
+            daily_vols = {
+                t: float(holding_returns[t].dropna().tail(120).std())
+                for t in holding_returns.columns
+                if holding_returns[t].notna().sum() > 30}
+            daily_vols.update({
+                t: float(fund_returns[t].dropna().tail(120).std())
+                for t in fund_returns.columns
+                if fund_returns[t].notna().sum() > 30})
+            book_views[name]["orders"] = actions.build(
+                plan=book_views[name]["plan"],
+                prices=latest,
+                vols=daily_vols,
+                weights=book_views[name]["optimisation"]["theories"]["current"]["weights"],
+                growth_gap_pp=book_views[name]["optimisation"]["theories"]["growth"]["growthGain"],
+                max_name_weight=advice.MAX_NAME_WEIGHT,
+                free_sells=advice.MONTHLY_FREE_SELLS,
+                goal_date=(goal or {}).get("targetDate"),
+            )
         except ValueError as exc:
             print(f"  {name}: optimisation skipped ({exc})")
             book_views[name]["optimisation"] = None
@@ -374,8 +394,6 @@ def build(agent_dir: str, allocation: float = 0.10,
             0.08, 10.0,
             fee_saving=0.005,
             extra_monthly=200.0,
-            employer_match=sum(
-                p.get("monthlyContribution", 0) for p in pension_pots.values()),
         ),
         "feasibility": {
             horizon: levers.feasibility(tradable_value,
@@ -383,6 +401,8 @@ def build(agent_dir: str, allocation: float = 0.10,
                                         target, horizon)
             for horizon, target in ((10.0, 1_000_000_000.0),)
         },
+        "deadlines": actions.calendar_deadlines(
+            goal_date=(goal or {}).get("targetDate")),
         "milestones": [
             levers.feasibility(tradable_value, advice.MONTHLY_BUY_CASH_EUR,
                                target, 10.0)

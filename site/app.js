@@ -1083,6 +1083,8 @@ function renderDerived() {
   renderAdditions(tickers, weights, value, mine);
   renderFrontier();
   renderStress(mine);
+  renderOrders();
+  renderDeadlines();
   renderLevers();
   renderMilestones();
   renderTheories();
@@ -2813,4 +2815,103 @@ function renderMilestones() {
     `to what the best investors alive have actually sustained. At a defensible 8% this book reaches ` +
     `<strong>${fmtEur(reference.atEightPercent)}</strong> in ten years — and the honest way to move that ` +
     `number is the table above, not a better fund.`;
+}
+
+/* ---------------- orders ---------------- */
+
+const URGENCY_CLASS = {
+  "now": "urg-now", "this week": "urg-week",
+  "this month": "urg-month", "opportunistic": "urg-opp",
+};
+
+function renderOrders() {
+  const orders = view().orders || [];
+  const box = document.getElementById("orderBox");
+  box.innerHTML = "";
+  if (!orders.length) {
+    box.append(el("p", { class: "muted" },
+      "Nothing to place — the book is close enough to target that no trade clears the minimum size."));
+    document.getElementById("orderNote").textContent = "";
+    return;
+  }
+
+  const named = t => {
+    const fund = DATA.funds.find(f => f.ticker === t);
+    if (fund) return fund.name;
+    const held = view().holdings.find(h => h.ticker === t);
+    return held ? held.name : t;
+  };
+
+  box.append(table(
+    ["When", "Order", "Holding", "Amount", "Limit", "If unfilled", "Costs to wait"],
+    orders.map(o => ({
+      cells: [
+        { node: el("span", { class: "urg " + URGENCY_CLASS[o.urgency] }, o.urgency) },
+        { node: el("strong", { class: o.side === "sell" ? "neg" : "pos" },
+            `${o.side === "sell" ? "SELL" : "BUY"} ${o.shares ? fmtNum(o.shares) : ""}`) },
+        named(o.ticker),
+        fmtEur(o.euros),
+        { node: o.limit
+            ? el("span", {}, el("strong", {}, fmtEur(o.limit)),
+                el("div", { class: "muted", style: "font-size:11.5px" },
+                  `now ${fmtEur(o.price)} · ${o.bandPct}% band`))
+            : el("span", { class: "muted" }, "market") },
+        { text: o.deadline
+            ? `${o.deadline} (${o.deadlineDays}d)`
+            : `limit expires ${o.limitExpires}`,
+          cls: o.deadlineDays !== null && o.deadlineDays <= 5 ? "neg" : "muted" },
+        { text: o.costPerMonth >= 1 ? fmtEur(o.costPerMonth) + "/mo" : "–",
+          cls: o.costPerMonth >= 20 ? "neg" : "muted" },
+      ],
+    })), { numFrom: 3 }));
+
+  const detail = el("div", { style: "margin-top:18px" });
+  for (const o of orders.slice(0, 4)) {
+    detail.append(el("div", { style: "padding:12px 0;border-bottom:1px solid var(--line-soft)" },
+      el("div", {},
+        el("span", { class: "urg " + URGENCY_CLASS[o.urgency] }, o.urgency),
+        el("strong", { style: "margin-left:10px" },
+          `${o.side === "sell" ? "Sell" : "Buy"} ${named(o.ticker)}`),
+        el("span", { class: "muted" },
+          ` — ${fmtEur(o.euros)}${o.shares ? `, about ${fmtNum(o.shares)} shares` : ""}`)),
+      el("div", { class: "muted", style: "font-size:13px;margin-top:6px" },
+        o.limit ? `${o.side === "sell" ? "Limit sell" : "Limit buy"} at ${fmtEur(o.limit)}. ${o.rationale}` : ""),
+      el("div", { class: "muted", style: "font-size:13px;margin-top:6px" }, o.deadlineReason || "")));
+  }
+  box.append(detail);
+
+  const urgent = orders.filter(o => o.urgency === "now");
+  const totalCost = orders.reduce((a, o) => a + o.costPerMonth, 0);
+  document.getElementById("orderNote").innerHTML =
+    (urgent.length
+      ? `<strong>${urgent.length} order${urgent.length === 1 ? "" : "s"} marked now.</strong> ` +
+        (urgent.some(o => o.overCap)
+          ? `${urgent.filter(o => o.overCap).map(o => o.ticker).join(", ")} sits past the ` +
+            `${(view().advice.budgets.maxNameWeightPct)}% single-name cap, which is concentration you did ` +
+            `not choose rather than a view you took. `
+          : "") +
+        `The rest are dated by the free-sell allowance, which resets at month end and does not carry over.<br><br>`
+      : "") +
+    `Leaving the whole plan undone costs about <strong>${fmtEur(totalCost)} a month</strong> in foregone ` +
+    `compounding — that figure, not a colour, is what "urgent" means here.<br><br>` +
+    `Two honest limits on all of this. The limit prices assume the recent daily volatility holds, which it ` +
+    `does until it does not; if a holding gaps through your limit on news, you get filled at a price the ` +
+    `band never contemplated. And the destination comes from CAPM, which cannot see any edge you believe ` +
+    `you have — so these are the orders that follow from the model, not a claim that the model is right.`;
+}
+
+function renderDeadlines() {
+  const rows = DATA.deadlines || [];
+  const box = document.getElementById("deadlineTable");
+  if (!rows.length) return;
+  box.innerHTML = "";
+  box.append(table(["Date", "In", "What", "Why it matters"],
+    rows.map(r => ({
+      cells: [
+        { node: el("strong", {}, r.when) },
+        { text: `${r.days} days`, cls: r.days <= 14 ? "neg" : "" },
+        r.what,
+        { text: r.why, cls: "muted" },
+      ],
+    })), { numFrom: 1 }));
 }

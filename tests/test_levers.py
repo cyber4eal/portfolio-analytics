@@ -44,11 +44,12 @@ def test_a_year_in_cash_is_shown_as_a_cost():
     assert cash["gain"] < 0
 
 
-def test_an_employer_match_is_ranked_when_there_is_one():
-    without = levers.rank(19_255, 400, 0.08, 10)
-    with_match = levers.rank(19_255, 400, 0.08, 10, employer_match=310)
-    assert len(with_match["levers"]) == len(without["levers"]) + 1
-    assert with_match["levers"][0]["name"] == "Take the match"
+def test_the_employer_match_is_not_offered_as_a_lever():
+    """Both of them already contribute at the level that maxes the match, so
+    there is nothing left to take. A list with one impossible item at the
+    top devalues the real ones underneath it."""
+    names = [l["name"] for l in levers.rank(19_255, 400, 0.08, 10)["levers"]]
+    assert not any("match" in name.lower() for name in names)
 
 
 # ---------------- feasibility ----------------

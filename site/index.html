@@ -141,6 +141,12 @@ input[type=range]{accent-color:var(--accent);width:180px;vertical-align:middle}
 #heatmap{border-collapse:collapse;font-size:11px}
 #heatmap td,#heatmap th{padding:0;text-align:center}
 #heatmap th{font-size:10px;color:var(--slate);font-weight:600;padding:3px}
+.urg{display:inline-block;padding:2px 8px;font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.urg-now{background:#B9002F;color:#fff}
+.urg-week{background:#B07C1F;color:#fff}
+.urg-month{background:var(--accent);color:#fff}
+.urg-opp{background:var(--line);color:var(--slate)}
 .pielegend{display:flex;gap:16px;align-items:center;font-size:12px;color:var(--slate);padding:12px 0 0}
 .pielegend i{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:-1px}
 #heatmap td.cell{width:30px;height:26px;color:#fff;font-variant-numeric:tabular-nums}
@@ -371,6 +377,18 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
     <div class="section-head">
       <h2>Advice</h2>
       <p>Mechanical consequences of the numbers, not recommendations. Four theories are run side by side because they optimise different things — where they agree you can be confident, and where they diverge is where the assumptions are doing the work.</p>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>Orders</h3>
+      <div class="body">
+        <p class="hint">What to place, at what price, by when. Limits are set from each holding's own daily volatility — not a forecast of direction, just the observation that a stock moving 2% a day usually trades 1% better than it does right now, and that waiting is free if the wait has an expiry.</p>
+        <div id="orderBox"></div>
+      </div>
+      <div class="warnbox" id="orderNote"></div>
+    </div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>Dates that impose themselves</h3>
+      <div class="body"><div class="tablewrap" id="deadlineTable"></div></div>
     </div>
     <div class="panel wide" style="margin-bottom:20px">
       <h3>What actually moves the number</h3>

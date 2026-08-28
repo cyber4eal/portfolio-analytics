@@ -46,8 +46,7 @@ class Lever:
 
 
 def rank(start: float, monthly: float, annual_return: float, years: float,
-         fee_saving: float = 0.005, extra_monthly: float = 200.0,
-         employer_match: float = 0.0) -> dict:
+         fee_saving: float = 0.005, extra_monthly: float = 200.0) -> dict:
     """Each lever pulled on its own, from the same starting point."""
     base = terminal(start, monthly, annual_return, years)
     levers = []
@@ -81,12 +80,10 @@ def rank(start: float, monthly: float, annual_return: float, years: float,
         0, "A year out of the market near the start costs a whole year of "
            "compounding at the end, when the pot is largest."))
 
-    if employer_match > 0:
-        levers.append(Lever(
-            "Take the match", f"+{employer_match:,.0f} a month from your employer",
-            terminal(start, monthly + employer_match, annual_return, years),
-            0, "Money you are offered and decline by not contributing. "
-               "Nothing else on this list returns 100% on day one."))
+    # No employer-match lever. Both of them already contribute at the level
+    # that maxes it, so there is nothing there to take - listing it would be
+    # advice to do something already done, and a list with one impossible
+    # item on top devalues the four real ones underneath.
 
     for lever in levers:
         lever.gain = lever.terminal - base
