@@ -64,7 +64,7 @@ curl -s localhost:8001/api/health
 the sheet. `false` means the ledger still records everything and the mirror
 is off — which is the safe failure, not a broken one.
 
-## Every rebuild, from this Mac
+## Every rebuild, from this Mac (see the ordering note in deploy.sh)
 
 ```bash
 python3 -m fundengine build && ./deploy/deploy.sh
