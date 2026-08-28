@@ -7,3 +7,7 @@ venv/
 build/
 dist/
 .DS_Store
+
+# Built payload carries live holdings and values - never commit it.
+site/data.json
+.cache/
