@@ -34,6 +34,8 @@ from __future__ import annotations
 import calendar
 from datetime import date, timedelta
 
+from . import brokers, confidence
+
 TRADING_DAYS = 252
 
 #: How far out to place a limit, in daily standard deviations. Just under
@@ -116,7 +118,13 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
           today: date | None = None,
           currencies: dict | None = None, fx: float | None = None,
           positions: dict | None = None, whole_shares: bool = True,
-          location: dict | None = None) -> list[dict]:
+          location: dict | None = None,
+          theories: dict | None = None,
+          unreconciled: set | None = None,
+          estimated_basis: set | None = None,
+          history_years: float = 0.0,
+          price_age_hours: float | None = None,
+          trends: dict | None = None) -> list[dict]:
     """Turn the rebalance plan into dated, priced orders.
 
     Prices come in as EUR, because everything else in this project is
@@ -166,7 +174,8 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
         # are; a buy should go wherever it is cheapest.
         routing = (_brokers.route_sell(ticker, wanted_euros, location, price)
                    if trade["side"] == "sell"
-                   else _brokers.route_buy(wanted_euros, currency, ticker))
+                   else _brokers.route_buy(wanted_euros, currency, ticker,
+                                          (location or {}).get(ticker)))
         # Trading 212's own history shows fractional fills, so the venue
         # can do them - but Catalin has said these accounts cannot, and a
         # stated constraint beats an inferred capability. `whole_shares`
@@ -287,6 +296,23 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
             "urgency": _urgency(monthly_cost, over_cap, days_left),
             "overCap": over_cap,
             "trend": trade.get("vsAverage200"),
+            # How much this instruction can actually be leaned on. Kept next
+            # to the order rather than in a footnote, because an order with
+            # a weak case and one with a strong case look identical once
+            # they are both a line in a table.
+            "confidence": confidence.score(
+                ticker, trade["side"],
+                theories=theories or {},
+                current_pct=trade.get("currentPct") or 0.0,
+                annual_gain=monthly_cost * 12,
+                trade_cost=(routing.get("cost") or 0.0),
+                reconciled=ticker not in (unreconciled or set()),
+                basis_known=ticker not in (estimated_basis or set()),
+                history_years=history_years,
+                price_age_hours=price_age_hours,
+                vs_200d=trade.get("vsAverage200"),
+                momentum=(trends or {}).get(ticker, {}).get("momentum12_1"),
+            ),
         })
 
     order = {level: i for i, level in enumerate(URGENCY)}

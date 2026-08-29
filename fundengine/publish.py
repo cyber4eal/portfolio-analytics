@@ -272,6 +272,13 @@ def build(agent_dir: str, allocation: float = 0.10,
     print("Reading trend...")
     trends = optimise.trend_signals(closes)
 
+    # How much overlapping history the covariance behind every recommendation
+    # actually rests on. Reported rather than assumed, because it is the cap
+    # on how confident any of this is allowed to be.
+    history_years = round((matrix.index[-1] - matrix.index[0]).days / 365.25, 2)
+    price_age_hours = round(
+        (dt.datetime.now() - matrix.index[-1].to_pydatetime()).total_seconds() / 3600, 1)
+
     print("Building each book's view...")
     book_views = {}
     for name in views:
@@ -378,6 +385,14 @@ def build(agent_dir: str, allocation: float = 0.10,
                 location=brokers.locate(
                     all_trades,
                     None if name in (book.COMBINED,) else name),
+                theories=book_views[name]["optimisation"]["theories"],
+                unreconciled={c["ticker"] for c in corrections},
+                estimated_basis={ticker for (_, ticker), row
+                                 in ledger_positions.items()
+                                 if row.get("estimated_shares", 0) > 0},
+                history_years=history_years,
+                price_age_hours=price_age_hours,
+                trends=trends,
             )
         except ValueError as exc:
             print(f"  {name}: optimisation skipped ({exc})")
@@ -458,6 +473,7 @@ def build(agent_dir: str, allocation: float = 0.10,
         "corrections": corrections,
         "brokers": {n: {"fractional": b.fractional, "note": b.note}
                     for n, b in brokers.BROKERS.items()},
+        "historyYears": history_years,
         "taxMode": TAX_MODE,
         "taxHorizon": TAX_HORIZON,
         "taxComparison": irish_tax.compare(0.07, TAX_HORIZON, 10_000),

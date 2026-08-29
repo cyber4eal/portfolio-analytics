@@ -616,6 +616,7 @@ function renderEscape() {
   renderVenture(start);
   renderFounder();
   renderLeverage(mu, sigma);
+  renderShortcuts(mu, sigma, start);
   renderVerdict(start);
 }
 

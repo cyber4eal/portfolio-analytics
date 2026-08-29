@@ -225,7 +225,8 @@ def test_a_split_position_is_two_orders():
     from fundengine import brokers
     routed = brokers.route_sell("AMZN", 1_840, brokers.locate(LEDGER, "Catalin"))
     assert len(routed["split"]) == 2
-    assert "two orders" in routed["why"]
+    # Counted rather than spelled, because a position can sit across three.
+    assert "2 orders" in routed["why"]
 
 
 def test_a_holding_with_no_history_says_so_rather_than_guessing():
@@ -275,3 +276,59 @@ def test_a_stated_constraint_beats_an_inferred_capability():
     buy = next(o for o in out if o["side"] == "buy")
     assert buy["shares"] == int(buy["shares"])
     assert buy["fractionalOk"] is False
+
+
+def test_a_note_that_merely_mentions_another_broker_is_not_filed_under_it():
+    """The opening balance for the Trading 212 half of APLD explained itself
+    by naming Revolut, and a substring scan filed all twenty shares there."""
+    from fundengine import brokers
+
+    trades = [{
+        "ticker": "APLD", "action": "buy", "shares": 20.0, "portfolio": "Catalin",
+        "note": "Trading 212 opening balance - 26 are at Revolut, these are not",
+    }]
+    assert brokers.locate(trades) == {"APLD": {brokers.TRADING212: 20.0}}
+
+
+def test_holding_something_at_a_venue_beats_the_range_heuristic():
+    """Revolut is 'unlikely' to list an Amsterdam line and nonetheless holds
+    the EM tracker in this book. Evidence outranks the rule of thumb."""
+    from fundengine import brokers
+
+    assert not brokers.lists_it(brokers.REVOLUT, "IEMA.AS")
+    assert brokers.lists_it(brokers.REVOLUT, "IEMA.AS", {brokers.REVOLUT: 38.0})
+
+
+def test_a_split_names_the_venue_that_actually_allows_fractions():
+    from fundengine import brokers
+
+    why = brokers.route_sell("AMZN", 1800.0,
+                             {"AMZN": {brokers.REVOLUT: 7.0, brokers.DAVY: 1.0}},
+                             234.0)["why"]
+    assert "Revolut leg can be a fraction" in why
+    assert "Davy trades whole shares" in why
+    assert "Trading 212" not in why
+
+
+def test_confidence_is_capped_when_the_share_count_does_not_reconcile():
+    """An order sized off an unverified count is the one error here that
+    costs real money, so no amount of good arithmetic may outrank it."""
+    from fundengine import confidence
+
+    kwargs = dict(theories={t: {"weights": {"X": 0.0}} for t in confidence.THEORIES},
+                  current_pct=10.0, annual_gain=500.0, trade_cost=1.0,
+                  basis_known=True, history_years=12.0, price_age_hours=1.0,
+                  vs_200d=-10.0, momentum=-10.0)
+    clean = confidence.score("X", "sell", reconciled=True, **kwargs)
+    dirty = confidence.score("X", "sell", reconciled=False, **kwargs)
+
+    assert clean["band"] == "high" and clean["score"] == 100
+    assert dirty["score"] <= 34 and dirty["band"] == "speculative"
+    assert any("does not reconcile" in c for c in dirty["caps"])
+
+
+def test_a_trade_that_costs_more_than_it_gains_loses_points():
+    from fundengine import confidence
+
+    points, why = confidence.edge_vs_cost(annual_gain=10.0, trade_cost=15.0)
+    assert points < 0 and "loses money on arithmetic alone" in why

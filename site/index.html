@@ -11,6 +11,7 @@
 <script src="cube.js"></script>
 <script src="celebrate.js"></script>
 <script src="escape.js"></script>
+<script src="shortcuts.js"></script>
 <style>
 :root{
   --ink:#1C1C1E; --slate:#5B5B62; --paper:#FFFFFF; --mist:#F6F5F3;
@@ -209,6 +210,19 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
 .escape-controls .btns{display:flex;flex-wrap:wrap;gap:6px}
 .numin{padding:6px 9px;border:1px solid var(--line);background:var(--paper);color:var(--ink);
   font:inherit;font-size:13.5px;width:120px;font-variant-numeric:tabular-nums}
+.confcell{display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.conf{display:inline-block;padding:2px 7px;font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.conf-high{background:#1E7A46;color:#fff}
+.conf-mod{background:#0F7E82;color:#fff}
+.conf-low{background:#B07C1F;color:#fff}
+.conf-spec{background:#B9002F;color:#fff}
+.confbar{display:block;width:78px;height:4px;background:var(--line)}
+.confbar i{display:block;height:100%;background:var(--accent)}
+.confdetail{margin-top:10px;padding:10px 12px;background:var(--mist);border:1px solid var(--line)}
+.confdetail .confhead{margin-bottom:7px}
+.confdetail ul{margin:0 0 0 18px;font-size:12.5px;line-height:1.55}
+.confcap{margin-top:7px;font-size:12.5px;color:var(--loss);font-weight:600}
 </style>
 </head>
 <body>
@@ -666,6 +680,51 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
           <div class="chartbox tall"><canvas id="chartLeverage"></canvas></div>
         </div>
         <p class="note" id="leverageNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Options &mdash; the only convex instrument on this page</h3>
+        <div class="body">
+          <p class="hint">Priced with Black&ndash;Scholes at each line's own realised volatility, then re-read under its CAPM drift rather than the risk-neutral one the pricing model assumes. The gap between those two is the whole argument.</p>
+          <div class="escape-controls">
+            <div class="grp"><label>Underlying</label><select class="numin" id="optTicker" style="width:210px"></select></div>
+            <div class="grp"><label>Months to expiry</label>
+              <input type="range" id="optMonths" min="1" max="24" step="1" value="12">
+              <div class="val" id="optLabels"></div></div>
+            <div class="grp"><label>Strike, % of spot</label>
+              <input type="range" id="optStrike" min="70" max="200" step="5" value="110"></div>
+          </div>
+          <div id="optionBox"></div>
+          <div class="chartbox tall" style="margin-top:18px"><canvas id="chartOption"></canvas></div>
+        </div>
+        <p class="note" id="optionNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>The run you would have to win</h3>
+        <div class="body">
+          <p class="hint">No single option, at any strike anyone will sell you, covers the multiple the target needs. So it has to be a sequence &mdash; and the probability of a sequence is the product.</p>
+          <div class="tablewrap" id="parlayBox"></div>
+        </div>
+        <p class="note" id="parlayNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Going short</h3>
+        <div class="body"><div id="shortBox"></div></div>
+        <p class="note" id="shortNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Leveraged products and what daily rebalancing costs</h3>
+        <div class="body"><div class="tablewrap" id="decayBox"></div></div>
+        <p class="note" id="decayNote"></p>
+      </div>
+
+      <div class="panel wide" style="margin-bottom:20px">
+        <h3>Every shortcut, with how sure the answer is</h3>
+        <div class="body"><div class="tablewrap" id="verdictTable"></div></div>
+        <p class="note" id="verdictTableNote"></p>
       </div>
 
       <div class="panel wide" style="margin-bottom:20px">

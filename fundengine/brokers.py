@@ -56,9 +56,31 @@ BROKERS = {
 #: the location is recorded here rather than left unknown.
 KNOWN_LOCATION = {
     "AEM": TRADING212,
-    "APLD": TRADING212,
     "SPCX": TRADING212,
 }
+
+
+#: How a note names its account. Matched against the START of the note, not
+#: anywhere in it: an opening balance whose explanation mentions a second
+#: broker was being filed under whichever name appeared first in this list,
+#: which put twenty Trading 212 shares in the Revolut column.
+NOTE_PREFIXES = ((DAVY, ("davy",)),
+                 (REVOLUT, ("revolut",)),
+                 (TRADING212, ("trading 212", "t212")))
+
+
+def broker_from_note(note: str | None) -> str | None:
+    text = (note or "").strip().lower()
+    if not text:
+        return None
+    for broker, prefixes in NOTE_PREFIXES:
+        if any(text.startswith(prefix) for prefix in prefixes):
+            return broker
+    # Fall back to a scan, for a hand-written note that leads with something
+    # else. Ambiguous notes - two broker names, neither at the front - are
+    # left unplaced rather than guessed at.
+    hits = [b for b, prefixes in NOTE_PREFIXES if any(p in text for p in prefixes)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def locate(trades: list[dict], portfolio: str | None = None) -> dict:
@@ -73,11 +95,7 @@ def locate(trades: list[dict], portfolio: str | None = None) -> dict:
     for trade in trades:
         if portfolio and trade.get("portfolio") != portfolio:
             continue
-        note = (trade.get("note") or "").lower()
-        broker = (DAVY if "davy" in note
-                  else REVOLUT if "revolut" in note
-                  else TRADING212 if "trading 212" in note or "t212" in note
-                  else None)
+        broker = broker_from_note(trade.get("note"))
         if not broker:
             continue
         row = held.setdefault(trade["ticker"], {})
@@ -105,12 +123,18 @@ EUROPEAN_LINES = (".DE", ".AS", ".PA", ".MI", ".L", ".SW")
 UNLIKELY_AT = {REVOLUT: EUROPEAN_LINES}
 
 
-def lists_it(broker: str, ticker: str) -> bool:
+def lists_it(broker: str, ticker: str, seen_at: dict | None = None) -> bool:
+    # Having actually held it there beats any guess about a product range.
+    # Revolut is "unlikely" for Amsterdam lines and nonetheless carries the
+    # EM tracker in this book, which the ledger proves and the rule did not.
+    if seen_at and seen_at.get(broker):
+        return True
     suffixes = UNLIKELY_AT.get(broker)
     return not (suffixes and ticker.endswith(suffixes))
 
 
-def route_buy(euros: float, currency: str, ticker: str = "") -> dict:
+def route_buy(euros: float, currency: str, ticker: str = "",
+              seen_at: dict | None = None) -> dict:
     """Cheapest venue that plausibly lists it, with the costs shown.
 
     Cost decides, but only among venues that carry the instrument. Routing
@@ -122,7 +146,7 @@ def route_buy(euros: float, currency: str, ticker: str = "") -> dict:
     """
     options = [{"broker": name, "cost": cost_at(name, euros, currency),
                 "note": BROKERS[name].note,
-                "lists": lists_it(name, ticker) if ticker else True,
+                "lists": lists_it(name, ticker, seen_at) if ticker else True,
                 "fxPct": BROKERS[name].fx_pct}
                for name in BROKERS]
     options.sort(key=lambda o: (not o["lists"], o["cost"], o["fxPct"]))
@@ -194,11 +218,21 @@ def route_sell(ticker: str, euros: float, location: dict,
                        else ", which trades whole shares only.")),
         }
 
+    fractional = [s["broker"] for s in split if s["fractional"]]
+    whole_only = [s["broker"] for s in split if not s["fractional"]]
+    if fractional and whole_only:
+        constraint = (f" Only the {' and '.join(fractional)} "
+                      f"{'legs' if len(fractional) > 1 else 'leg'} can be a fraction; "
+                      f"{' and '.join(whole_only)} trades whole shares.")
+    elif whole_only:
+        constraint = " Every venue here trades whole shares only."
+    else:
+        constraint = " Both venues allow fractions."
     return {
         "broker": split[0]["broker"],
         "split": split,
-        "why": ("Held across both accounts — "
+        "why": (f"Held across {len(split)} accounts — "
                 + ", ".join(f"{s['shares']:,.4g} at {s['broker']}" for s in split)
-                + ". Selling the position is two orders, not one, and only the "
-                  "Trading 212 leg can be a fraction."),
+                + f". Selling the position is {len(split)} orders, not one."
+                + constraint),
     }

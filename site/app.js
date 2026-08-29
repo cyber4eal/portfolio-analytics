@@ -2977,6 +2977,43 @@ const URGENCY_CLASS = {
   "this month": "urg-month", "opportunistic": "urg-opp",
 };
 
+const CONF_CLASS = { high: "conf-high", moderate: "conf-mod",
+                     low: "conf-low", speculative: "conf-spec" };
+
+/* A score with the bar next to it. The number alone reads as precision the
+   thing does not have; the bar makes it obvious at a glance that 72 and 79
+   are the same recommendation with a different rounding. */
+function confidenceCell(c) {
+  if (!c) return { text: "–", cls: "muted" };
+  const wrap = el("span", { class: "confcell" });
+  wrap.append(el("span", { class: "conf " + (CONF_CLASS[c.band] || "conf-spec") },
+    `${c.score} ${c.band}`));
+  const bar = el("span", { class: "confbar" });
+  bar.append(el("i", { style: `width:${c.score}%` }));
+  wrap.append(bar);
+  return { node: wrap };
+}
+
+function confidenceDetail(c) {
+  if (!c) return null;
+  const box = el("div", { class: "confdetail" });
+  box.append(el("div", { class: "confhead" },
+    el("span", { class: "conf " + (CONF_CLASS[c.band] || "conf-spec") },
+      `confidence ${c.score}/100 — ${c.band}`)));
+  const list = el("ul");
+  for (const p of c.parts) {
+    list.append(el("li", {},
+      el("strong", {}, `${p.name} ${p.points}/${p.outOf}`),
+      el("span", { class: "muted" }, ` — ${p.why}`)));
+  }
+  box.append(list);
+  for (const cap of c.caps || []) {
+    box.append(el("div", { class: "confcap" }, cap));
+  }
+  box.append(el("div", { class: "muted", style: "font-size:12px;margin-top:6px" }, c.ceiling));
+  return box;
+}
+
 function renderOrders() {
   const orders = view().orders || [];
   const box = document.getElementById("orderBox");
@@ -2999,7 +3036,8 @@ function renderOrders() {
     currency === "USD" ? "$" + value.toFixed(2) : fmtEur(value);
 
   box.append(table(
-    ["When", "Order", "Holding", "Where", "Amount", "Limit price", "If unfilled", "Costs to wait"],
+    ["When", "Order", "Holding", "Where", "Amount", "Limit price", "If unfilled",
+     "Costs to wait", "How sure"],
     orders.map(o => ({
       cls: o.skipped ? "muted" : "",
       cells: [
@@ -3034,6 +3072,7 @@ function renderOrders() {
           cls: o.deadlineDays !== null && o.deadlineDays <= 5 ? "neg" : "muted" },
         { text: o.costPerMonth >= 1 ? fmtEur(o.costPerMonth) + "/mo" : "–",
           cls: o.costPerMonth >= 20 ? "neg" : "muted" },
+        confidenceCell(o.confidence),
       ],
     })), { numFrom: 3 }));
 
@@ -3053,7 +3092,8 @@ function renderOrders() {
       o.rounding ? el("div", { style: "font-size:13px;margin-top:6px;color:#B07C1F" }, o.rounding) : null,
       o.brokerWhy ? el("div", { class: "muted", style: "font-size:13px;margin-top:6px" },
         el("strong", {}, (o.broker || "Venue unknown") + ". "), o.brokerWhy) : null,
-      el("div", { class: "muted", style: "font-size:13px;margin-top:6px" }, o.deadlineReason || "")));
+      el("div", { class: "muted", style: "font-size:13px;margin-top:6px" }, o.deadlineReason || ""),
+      confidenceDetail(o.confidence)));
   }
   box.append(detail);
 
@@ -3081,6 +3121,14 @@ function renderOrders() {
     `Prices in bold are the currency the broker quotes, which for a US line is dollars. The euro figure ` +
     `beside it is for reconciling against the rest of this site; typing it into a dollar ticket would be a ` +
     `16% error on the one number that has to be exact.<br><br>` +
+    `<strong>How sure</strong> is a score out of 100 built from five things that can be checked, not from ` +
+    `how strong the conclusion feels: whether the four independent optimisations agree on the direction, ` +
+    `whether the expected gain beats what the trade costs to place, whether the share count reconciles and ` +
+    `the cost basis is real, how much overlapping history the estimate rests on (` +
+    `${DATA.historyYears ? DATA.historyYears + " years here" : "unknown here"}), and whether price momentum ` +
+    `points the same way. Two of those can veto: an unreconciled share count caps the score at 34 however ` +
+    `good the arithmetic looks, and under three years of history caps it below high. Open an order below to ` +
+    `see which of the five is costing it points.<br><br>` +
     `Two honest limits on all of this. The limit prices assume the recent daily volatility holds, which it ` +
     `does until it does not; if a holding gaps through your limit on news, you get filled at a price the ` +
     `band never contemplated. And the destination comes from CAPM, which cannot see any edge you believe ` +

@@ -40,6 +40,11 @@ class Trade:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     recorded: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     applied_to_sheet: bool = False
+    #: False for an opening balance - shares that are definitely held but
+    #: whose statement was never imported, so the price on the entry is
+    #: today's market rather than what was paid. The share count is real;
+    #: the cost is not, and nothing should quote a gain on it.
+    basis_known: bool = True
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -105,7 +110,7 @@ def positions(trades: list[dict], portfolio: str | None = None) -> dict[str, dic
         ticker = trade["ticker"]
         row = book.setdefault(ticker, {
             "ticker": ticker, "shares": 0.0, "cost": 0.0,
-            "realised": 0.0, "fees": 0.0, "trades": 0,
+            "realised": 0.0, "fees": 0.0, "trades": 0, "estimated_shares": 0.0,
         })
         shares, price = float(trade["shares"]), float(trade["price"])
         row["fees"] += float(trade.get("fee") or 0)
@@ -114,6 +119,8 @@ def positions(trades: list[dict], portfolio: str | None = None) -> dict[str, dic
         if trade["action"] == BUY:
             row["shares"] += shares
             row["cost"] += shares * price
+            if trade.get("basis_known") is False:
+                row["estimated_shares"] += shares
         else:
             if row["shares"] <= 0:
                 # Selling something the ledger never saw bought: record the
@@ -129,6 +136,7 @@ def positions(trades: list[dict], portfolio: str | None = None) -> dict[str, dic
 
     for row in book.values():
         row["avg_cost"] = round(row["cost"] / row["shares"], 4) if row["shares"] > 0 else None
+        row["estimated_shares"] = round(row["estimated_shares"], 6)
         row["shares"] = round(row["shares"], 6)
         row["cost"] = round(row["cost"], 2)
         row["realised"] = round(row["realised"], 2)
@@ -179,6 +187,7 @@ def reconcile(trades: list[dict], holdings: list[dict],
             "sheetShares": round(float(held.get("shares") or 0), 4),
             "difference": round(difference, 4),
             "avgCost": row["avg_cost"], "cost": row["cost"],
+            "estimatedShares": row.get("estimated_shares", 0.0),
             "value_eur": held.get("value_eur", 0),
         }
         (matched if abs(difference) < 0.01 else mismatched).append(entry)
