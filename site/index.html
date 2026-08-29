@@ -234,6 +234,61 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
 .tg .k{color:var(--slate)}
 .tg .v{text-align:right;font-variant-numeric:tabular-nums}
 .goodbox{background:var(--shade);border-left:3px solid var(--green);padding:13px 15px;font-size:13.5px;line-height:1.6}
+.amber{color:#B07C1F}
+
+/* ---- phone ---- */
+.tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tablewrap .tscroll{overflow:visible}
+.note,.warnbox,.goodbox,.hint,.muted{overflow-wrap:anywhere}
+@media (max-width:760px){
+  .masthead-inner,.navbar-inner,.wrap,.footer-inner{padding-left:14px;padding-right:14px}
+  .masthead-inner{flex-wrap:wrap;gap:10px;padding-top:14px;padding-bottom:14px}
+  .masthead .spacer{display:none}
+  .wrap{padding-top:16px;padding-bottom:48px}
+  .centre-title{font-size:19px}
+  .logo-box{width:46px;height:46px;font-size:15px}
+  /* Tabs scroll sideways instead of wrapping onto three rows and eating
+     half the screen before any content starts. */
+  .navbar-inner{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  .navbar-inner::-webkit-scrollbar{display:none}
+  .navbar button{padding:12px 11px;font-size:13px;white-space:nowrap}
+  .panels{grid-template-columns:1fr;gap:14px}
+  .panel .body{padding:12px}
+  .panel h3{padding:11px 12px}
+  .panel .note{padding:0 12px 12px}
+  .section-head{padding:14px}
+  .section-head h2{font-size:19px}
+  .section-head p{font-size:12.5px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(142px,1fr))}
+  .kpi{padding:12px 13px}
+  .kpi .v{font-size:19px}
+  .chartbox{height:230px}
+  .chartbox.tall{height:290px}
+  /* A capped scroll box inside a scrolling page is a trap on touch: you
+     swipe to scroll the page and move the table instead. */
+  .tablewrap{max-height:none;overflow:visible}
+  table.grid{font-size:12.5px}
+  .grid th,.grid td{padding:7px 8px}
+  .grid td:first-child{min-width:120px}
+  .tablewrap table.grid,.tscroll table.grid{min-width:560px}
+  #theoryTable td:last-child,#hedgeTable td:first-child{min-width:170px}
+  #theoryTable td:first-child{min-width:140px}
+  .escape-controls{padding:12px;gap:12px}
+  .escape-controls .grp{min-width:100%}
+  .numin{width:100%}
+  .ticketgrid{grid-template-columns:1fr}
+  .ticketline{font-size:14.5px}
+  .confcell{align-items:flex-start}
+  .confbar{width:64px}
+  .toasts{top:8px;width:calc(100vw - 16px)}
+  .mstone-next .top{flex-direction:column;gap:4px}
+  .footer-inner{padding-bottom:28px}
+}
+@media (max-width:400px){
+  .kpis{grid-template-columns:1fr}
+  .tg{flex-direction:column;gap:2px}
+  .tg .v{text-align:left}
+}
 </style>
 </head>
 <body>
@@ -462,6 +517,7 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <h2>Advice</h2>
       <p>Mechanical consequences of the numbers, not recommendations. Four theories are run side by side because they optimise different things — where they agree you can be confident, and where they diverge is where the assumptions are doing the work.</p>
     </div>
+    <div id="marketBanner" class="warnbox" style="margin-bottom:20px"></div>
     <div class="panel wide" style="margin-bottom:20px" id="discrepancyPanel">
       <h3>Before you place anything — unreconciled positions</h3>
       <div class="body"><div class="tablewrap" id="discrepancyTable"></div></div>

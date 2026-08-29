@@ -34,7 +34,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, timedelta
 
-from . import brokers, confidence
+from . import brokers, confidence, markets
 
 TRADING_DAYS = 252
 
@@ -52,13 +52,10 @@ def _month_end(today: date) -> date:
     return today.replace(day=calendar.monthrange(today.year, today.month)[1])
 
 
-def _working_days(start: date, count: int) -> date:
-    day, added = start, 0
-    while added < count:
-        day += timedelta(days=1)
-        if day.weekday() < 5:
-            added += 1
-    return day
+def _working_days(start: date, count: int, market: str = markets.US) -> date:
+    """Kept as a thin alias so the intent reads at the call site. Holidays
+    are not sessions either, which the weekday-only version missed."""
+    return markets.add_sessions(start, count, market)
 
 
 def limit_price(price: float, daily_vol: float, side: str) -> dict:
@@ -82,7 +79,7 @@ def limit_price(price: float, daily_vol: float, side: str) -> dict:
             f"{'Ask' if side == 'sell' else 'Bid'} {abs(limit - price) / price * 100:.1f}% "
             f"{'above' if side == 'sell' else 'below'} today, which is {LIMIT_SIGMA:g} "
             f"of this holding's {daily_vol * 100:.1f}% daily move. Most weeks it "
-            f"trades through. If it has not filled in {LIMIT_DAYS} working days, "
+            f"trades through. If it has not filled in {LIMIT_DAYS} sessions, "
             f"take the market price - the edge was never large enough to hold out for."),
     }
 
@@ -244,16 +241,23 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
         # A hard deadline is something the calendar imposes. The limit's
         # expiry is tracked separately, because it constrains the order and
         # not the decision.
-        expiry = _working_days(today, LIMIT_DAYS)
+        venue = markets.market_for(ticker, currency)
+        expiry = _working_days(today, LIMIT_DAYS, venue)
         deadline, reason = None, None
         if trade["side"] == "sell":
-            # Free sells do not carry over, so an unused one is gone.
-            deadline = month_end
+            # Free sells do not carry over, so an unused one is gone - but
+            # the last chance to use one is the last SESSION of the month,
+            # not the last day of it. A month ending on a Sunday takes two
+            # days off the deadline without changing the date on it.
+            deadline = markets.previous_session(month_end, venue)
             used = len(month.get("sells", []))
             reason = (f"Free sells reset on {month_end.isoformat()}. You get "
                       f"{free_sells} a month and this plan uses {used}; an unused "
                       f"one is not carried forward, so a sell deferred past month "
-                      f"end costs a paid trade rather than a free one.")
+                      f"end costs a paid trade rather than a free one."
+                      + (f" The last session of the month is "
+                         f"{deadline.isoformat()}, so that is the real cut-off."
+                         if deadline != month_end else ""))
         else:
             reason = ("No calendar forces this one. It is funded by the sells "
                       "above, so it happens when they do - there is nothing to "
@@ -264,7 +268,11 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
                       f"{max_name_weight * 100:.0f}% cap. Every day it stays there is "
                       f"concentration you did not choose. ") + reason
 
-        days_left = (deadline - today).days if deadline else None
+        # Sessions, not calendar days. "Sell by the 31st, 2 days" read on a
+        # Saturday is one Monday, and counting the weekend into it is how a
+        # countdown stops being one.
+        days_left = markets.sessions_between(today, deadline, venue) if deadline else None
+        calendar_days_left = (deadline - today).days if deadline else None
         band = limit_price(price, vol, trade["side"])
         orders.append({
             "ticker": ticker,
@@ -281,6 +289,9 @@ def build(plan: dict, prices: dict, vols: dict, weights: dict,
             "nativeLimit": round(band["limit"] * rate, 2) if band["limit"] else None,
             "deadline": deadline.isoformat() if deadline else None,
             "deadlineDays": days_left,
+            "deadlineCalendarDays": calendar_days_left,
+            "market": venue,
+            "marketName": markets.SESSIONS[venue]["name"],
             "deadlineReason": reason,
             "limitExpires": expiry.isoformat(),
             "costPerMonth": round(monthly_cost, 2),

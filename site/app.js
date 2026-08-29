@@ -191,7 +191,12 @@ function table(headers, rows, opts = {}) {
     body.append(tr);
   }
   t.append(body);
-  return t;
+  /* Wrapped, always. A nine-column table has to scroll sideways on a phone,
+     and the only question is whether it scrolls inside its own box or drags
+     the whole page with it. Callers that already sit inside .tablewrap get
+     the wrapper neutralised by CSS rather than by a flag nobody would
+     remember to pass. */
+  return el("div", { class: "tscroll" }, t);
 }
 
 function chart(id, config) {
@@ -1086,6 +1091,7 @@ function renderDerived() {
   renderAdditions(tickers, weights, value, mine);
   renderFrontier();
   renderStress(mine);
+  renderMarketBanner();
   renderDiscrepancies();
   renderOrders();
   renderDerivativesAdvice();
@@ -2981,6 +2987,113 @@ const URGENCY_CLASS = {
   "this month": "urg-month", "opportunistic": "urg-opp",
 };
 
+/* ---------------- is the market actually open ---------------- */
+
+/* Worked out in the browser, not at build time. "Is the market open" is a
+   question about right now, and an answer baked into a nightly build is
+   wrong for most of the hours anyone reads it.
+
+   Timezones are done through Intl rather than by re-implementing two DST
+   rules in JavaScript: the exchange's own wall clock is what the session
+   times are quoted in, so ask for that clock directly. */
+function exchangeClock(tz, when = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz, hour12: false, weekday: "short",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  }).formatToParts(when).reduce((a, p) => (a[p.type] = p.value, a), {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    minutes: (+parts.hour % 24) * 60 + (+parts.minute),
+    weekday: parts.weekday,
+  };
+}
+
+/* A wall clock in some other zone, as a real instant. Guess UTC, measure how
+   far off that lands in the target zone, correct by the difference. */
+function zonedToInstant(dateStr, hhmm, tz) {
+  const guess = new Date(`${dateStr}T${hhmm}:00Z`);
+  const inZone = new Date(guess.toLocaleString("en-US", { timeZone: tz }));
+  const inUtc = new Date(guess.toLocaleString("en-US", { timeZone: "UTC" }));
+  return new Date(guess.getTime() + (inUtc - inZone));
+}
+
+const toMinutes = hhmm => (+hhmm.slice(0, 2)) * 60 + (+hhmm.slice(3, 5));
+const addDays = (iso, n) => {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+function marketStatus(code, when = new Date()) {
+  const spec = (DATA.markets || {})[code];
+  if (!spec) return null;
+  const holidays = new Set(spec.holidays || []);
+  const isSession = iso => {
+    const day = new Date(iso + "T12:00:00Z").getUTCDay();
+    return day !== 0 && day !== 6 && !holidays.has(iso);
+  };
+  const now = exchangeClock(spec.tz, when);
+  const open = toMinutes(spec.openLocal), close = toMinutes(spec.closeLocal);
+  const openNow = isSession(now.date) && now.minutes >= open && now.minutes < close;
+
+  let why = null;
+  if (!openNow) {
+    const day = new Date(now.date + "T12:00:00Z").getUTCDay();
+    why = (day === 0 || day === 6) ? "the weekend"
+        : holidays.has(now.date) ? "a market holiday"
+        : now.minutes < open ? "before the open" : "after the close";
+  }
+
+  // Next moment an order can actually execute.
+  let iso = now.date;
+  if (!isSession(iso) || now.minutes >= close) iso = addDays(iso, 1);
+  for (let i = 0; i < 30 && !isSession(iso); i++) iso = addDays(iso, 1);
+  const nextOpen = zonedToInstant(iso, spec.openLocal, spec.tz);
+
+  return { code, name: spec.name, open: openNow, why, nextOpen, nextSession: iso, spec };
+}
+
+const whenLocal = d => d.toLocaleString("en-IE", {
+  weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+});
+
+/* One line the whole page can lean on, because on a Saturday every order on
+   it is a limit you queue rather than a trade you place. */
+function renderMarketBanner() {
+  const box = document.getElementById("marketBanner");
+  if (!box || !DATA.markets) return;
+  // Not .map(marketStatus): map passes the index as the second argument,
+  // which lands in `when` and asks whether the market was open on the
+  // 1st of January 1970. It was not.
+  const states = ["US", "EU"].map(code => marketStatus(code)).filter(Boolean);
+  if (!states.length) return;
+  const shut = states.filter(s => !s.open);
+
+  if (!shut.length) {
+    box.className = "goodbox";
+    box.innerHTML = `<strong>Markets are open.</strong> ` +
+      states.map(s => `${s.name} until ${s.spec.closeLocal} local`).join(" · ") +
+      `. Orders below can be placed now.`;
+    return;
+  }
+
+  box.className = "warnbox";
+  box.innerHTML =
+    `<strong>${shut.length === states.length ? "Markets are closed" : "Some markets are closed"} — ` +
+    `${shut[0].why}.</strong> ` +
+    shut.map(s => `${s.name} reopens ${whenLocal(s.nextOpen)}`).join(". ") +
+    `.<br><br>` +
+    `<strong>What you can still do right now:</strong> queue the limit orders below as good-till-cancelled. ` +
+    `They sit with the broker and go live at the open — you are not waiting to place them, you are waiting ` +
+    `for them to become fillable. What you cannot do is sell at the market, because there is no market to ` +
+    `sell into; an order marked "market" placed now fills at whatever the first print is, which is the one ` +
+    `moment of the week with the widest spread.<br><br>` +
+    `Every countdown below is in <strong>sessions</strong>, not days. That distinction is the reason this ` +
+    `banner exists: a deadline two calendar days away over a weekend is one session, and the version that ` +
+    `counted days made it sound like there was room.`;
+}
+
 const CONF_CLASS = { high: "conf-high", moderate: "conf-mod",
                      low: "conf-low", speculative: "conf-spec" };
 
@@ -3016,6 +3129,37 @@ function confidenceDetail(c) {
   }
   box.append(el("div", { class: "muted", style: "font-size:12px;margin-top:6px" }, c.ceiling));
   return box;
+}
+
+
+const sessionWord = n =>
+  n === null || n === undefined ? "—"
+  : n === 0 ? "today or gone"
+  : n === 1 ? "1 session left"
+  : `${n} sessions left`;
+
+/* What can be done with this order at this minute, which on a Saturday is a
+   different sentence from the one on a Tuesday. */
+function placeabilityLine(order) {
+  const state = marketStatus(order.market || "US");
+  if (!state) return null;
+  const line = el("div", { style: "font-size:13px;margin-top:6px" });
+  if (state.open) {
+    line.innerHTML = `<strong>${state.name} is open.</strong> This can be placed now, and a limit that ` +
+      `is already through the market fills immediately.`;
+    line.className = "pos";
+    return line;
+  }
+  line.className = "amber";
+  line.innerHTML =
+    `<strong>${state.name} is closed — ${state.why}.</strong> Queue this as a good-till-cancelled limit ` +
+    `now and it goes live at ${whenLocal(state.nextOpen)}. ` +
+    (order.deadlineDays !== null && order.deadlineDays !== undefined && order.deadlineDays <= 1
+      ? `<strong>That is the same session the deadline falls in</strong>, so there is no second attempt: ` +
+        `if it does not fill, the free sell is gone.`
+      : `Do not leave it as a market order over a close — the first print of a session is the widest ` +
+        `spread of the week.`);
+  return line;
 }
 
 function renderOrders() {
@@ -3071,9 +3215,9 @@ function renderOrders() {
                   ` · ${o.bandPct}% band`))
             : el("span", { class: "muted" }, "market") },
         { text: o.deadline
-            ? `${o.deadline} (${o.deadlineDays}d)`
+            ? `${o.deadline} · ${sessionWord(o.deadlineDays)}`
             : `limit expires ${o.limitExpires}`,
-          cls: o.deadlineDays !== null && o.deadlineDays <= 5 ? "neg" : "muted" },
+          cls: o.deadlineDays !== null && o.deadlineDays <= 2 ? "neg" : "muted" },
         { text: o.costPerMonth >= 1 ? fmtEur(o.costPerMonth) + "/mo" : "–",
           cls: o.costPerMonth >= 20 ? "neg" : "muted" },
         confidenceCell(o.confidence),
@@ -3097,6 +3241,7 @@ function renderOrders() {
       o.brokerWhy ? el("div", { class: "muted", style: "font-size:13px;margin-top:6px" },
         el("strong", {}, (o.broker || "Venue unknown") + ". "), o.brokerWhy) : null,
       el("div", { class: "muted", style: "font-size:13px;margin-top:6px" }, o.deadlineReason || ""),
+      placeabilityLine(o),
       confidenceDetail(o.confidence)));
   }
   box.append(detail);

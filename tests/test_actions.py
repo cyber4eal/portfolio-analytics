@@ -332,3 +332,50 @@ def test_a_trade_that_costs_more_than_it_gains_loses_points():
 
     points, why = confidence.edge_vs_cost(annual_gain=10.0, trade_cost=15.0)
     assert points < 0 and "loses money on arithmetic alone" in why
+
+
+def test_a_deadline_is_counted_in_sessions_not_calendar_days():
+    """Saturday 29 August 2026 to Monday the 31st is two calendar days and
+    one session. The calendar-day version read as if there were room."""
+    from datetime import date
+    from fundengine import markets
+
+    saturday, monday = date(2026, 8, 29), date(2026, 8, 31)
+    assert (monday - saturday).days == 2
+    assert markets.sessions_between(saturday, monday) == 1
+
+
+def test_the_weekend_and_holidays_are_not_sessions():
+    from datetime import date
+    from fundengine import markets
+
+    assert not markets.is_session(date(2026, 8, 29))          # Saturday
+    assert not markets.is_session(date(2026, 8, 30))          # Sunday
+    assert markets.is_session(date(2026, 8, 31))              # Monday
+    assert not markets.is_session(date(2026, 11, 26))         # Thanksgiving
+    assert not markets.is_session(date(2026, 4, 3))           # Good Friday
+    # Easter Monday is a session in New York and not in Frankfurt.
+    assert markets.is_session(date(2026, 4, 6), markets.US)
+    assert not markets.is_session(date(2026, 4, 6), markets.EU)
+
+
+def test_the_next_open_is_a_real_moment_not_a_date():
+    from datetime import datetime, timezone
+    from fundengine import markets
+
+    saturday = datetime(2026, 8, 29, 9, 51, tzinfo=timezone.utc)
+    assert not markets.is_open(saturday)
+    assert markets.why_closed(saturday) == "the weekend"
+    # 09:30 New York on the Monday, which is 13:30 UTC in summer.
+    assert markets.next_open(saturday).isoformat() == "2026-08-31T13:30:00+00:00"
+    assert markets.next_open(saturday, markets.EU).isoformat() == "2026-08-31T07:00:00+00:00"
+
+
+def test_a_month_ending_at_the_weekend_moves_the_free_sell_cutoff():
+    """31 January 2027 is a Sunday, so the last chance to use a free sell is
+    the Friday. The date on the deadline did not used to move."""
+    from datetime import date
+    from fundengine import markets
+
+    assert date(2027, 1, 31).weekday() == 6
+    assert markets.previous_session(date(2027, 1, 31)) == date(2027, 1, 29)

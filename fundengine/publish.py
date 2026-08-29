@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import actions, advice, brokers, combo, derivatives, goals, protection, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
+from . import actions, advice, brokers, combo, derivatives, goals, markets, protection, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -590,6 +590,10 @@ def build(agent_dir: str, allocation: float = 0.10,
         "corrections": corrections,
         "brokers": {n: {"fractional": b.fractional, "note": b.note}
                     for n, b in brokers.BROKERS.items()},
+        # Shipped rather than answered, because "is the market open" is a
+        # question about right now and the answer must not be as old as the
+        # build. The browser works it out from these.
+        "markets": markets.publishable(),
         "protection": _protection_block(pension_pots, goal),
         "historyYears": history_years,
         "taxMode": TAX_MODE,
