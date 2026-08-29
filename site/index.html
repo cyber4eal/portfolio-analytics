@@ -12,6 +12,7 @@
 <script src="celebrate.js"></script>
 <script src="escape.js"></script>
 <script src="shortcuts.js"></script>
+<script src="protection.js"></script>
 <style>
 :root{
   --ink:#1C1C1E; --slate:#5B5B62; --paper:#FFFFFF; --mist:#F6F5F3;
@@ -223,6 +224,16 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
 .confdetail .confhead{margin-bottom:7px}
 .confdetail ul{margin:0 0 0 18px;font-size:12.5px;line-height:1.55}
 .confcap{margin-top:7px;font-size:12.5px;color:var(--loss);font-weight:600}
+.ticket{border:1px solid var(--line);background:var(--paper);padding:14px 16px;margin-bottom:14px}
+.ticket-best{border-left:4px solid var(--accent)}
+.ticket-venue{border-left:4px solid var(--c1);background:var(--mist)}
+.tickethead{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--slate);margin-bottom:8px}
+.ticketline{font-size:16px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.ticketgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:2px 22px;margin-top:12px}
+.tg{display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px solid var(--line-soft);font-size:13px}
+.tg .k{color:var(--slate)}
+.tg .v{text-align:right;font-variant-numeric:tabular-nums}
+.goodbox{background:var(--shade);border-left:3px solid var(--green);padding:13px 15px;font-size:13.5px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -465,6 +476,21 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <div class="warnbox" id="orderNote"></div>
     </div>
     <div class="panel wide" style="margin-bottom:20px">
+      <h3>Options and CFDs &mdash; the specific contract, if you want one</h3>
+      <div class="body">
+        <p class="hint">Every optionable holding, priced across five expiries and six strikes, ranked by what each contributes to compound growth at its own Kelly size &mdash; not by expected return, which always crowns whichever lottery ticket is furthest out of the money. Premiums are modelled, never quoted.</p>
+        <div id="derivBox"></div>
+      </div>
+      <div class="warnbox" id="derivNote"></div>
+    </div>
+
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>CFDs &mdash; what the leverage costs before it is right about anything</h3>
+      <div class="body"><div class="tablewrap" id="cfdBox"></div></div>
+      <div class="warnbox" id="cfdNote"></div>
+    </div>
+
+    <div class="panel wide" style="margin-bottom:20px">
       <h3>Why these funds — check the working</h3>
       <div class="body">
         <p class="hint">Every input that put a fund in the list, so the choice can be checked instead of trusted. Nothing here is sponsored, and no provider pays anything either way.</p>
@@ -594,6 +620,19 @@ footer{border-top:1px solid var(--line);background:var(--mist)}
       <input type="range" id="exploreWeight" min="1" max="25" step="1" value="5"><strong id="exploreWeightLabel">5%</strong>
     </div>
     <div id="exploreBox"></div>
+  </section>
+
+  <section class="view" id="view-protection">
+    <div class="section-head">
+      <h2>Protection</h2>
+      <p>Every other tab works on the money you have. This one works on the money you have not earned yet &mdash; which at 23 and 22 is roughly a hundred times larger, is attached to two bodies, and is the half nobody insures. The order these products belong in is not the order they are sold in, and the reason is arithmetic rather than opinion.</p>
+    </div>
+    <div class="escape-controls" id="protectionControls"></div>
+    <div id="protectionBox"></div>
+    <div class="panel wide" style="margin-bottom:20px">
+      <h3>What this adds up to</h3>
+      <div class="body"><div class="warnbox" id="protectionNote"></div></div>
+    </div>
   </section>
 
   <section class="view" id="view-escape">

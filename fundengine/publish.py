@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-from . import actions, advice, brokers, combo, goals, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
+from . import actions, advice, brokers, combo, derivatives, goals, protection, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
 SITE_DIR = Path(__file__).resolve().parent.parent / "site"
 
@@ -32,6 +34,79 @@ def _series_payload(returns: pd.DataFrame) -> dict:
         "dates": [d.date().isoformat() for d in returns.index],
         "series": {c: [None if pd.isna(v) else round(float(v), 6)
                        for v in returns[c]] for c in returns.columns},
+    }
+
+
+#: Ages as at 2026-08-29, given by Catalin. Everything else on the
+#: protection tab is recomputed in the browser from these and the constants
+#: below, so a salary correction moves every number without a rebuild.
+PEOPLE_AGES = {"Catalin": 23, "Stefani": 22}
+PEOPLE_SEX = {"Catalin": "male", "Stefani": "female"}
+#: Who already holds inpatient health cover. Catalin has Laya; Stefani does
+#: not, which is the only Lifetime Community Rating clock actually running.
+HEALTH_COVER = {"Catalin": True, "Stefani": False}
+#: A typical Irish DC scheme takes about this much of salary between
+#: employee and employer, which is how a salary is inferred from a
+#: contribution. Stated because it is an assumption, and editable on screen.
+SCHEME_CONTRIBUTION_RATE = 0.12
+
+
+def _protection_block(pension_pots: dict, goal: dict | None) -> dict:
+    """Inputs and constants for the protection tab.
+
+    The assessment itself runs in the browser rather than here, because the
+    two numbers it turns on - salary and age - are the two this project has
+    never been told directly. Shipping the constants instead of the answer
+    means correcting a salary moves every figure immediately rather than at
+    the next build.
+    """
+    people = []
+    for name, age in PEOPLE_AGES.items():
+        pot = pension_pots.get(name) or {}
+        monthly = float(pot.get("monthlyContribution") or 0.0)
+        inferred = monthly * 12 / SCHEME_CONTRIBUTION_RATE if monthly else 0.0
+        # One month of contributions is not enough to infer a salary from,
+        # and quietly doing it anyway is how a placeholder becomes a fact.
+        trusted = bool(pot.get("monthsObserved", 0) >= 6 and inferred > 15_000)
+        people.append({
+            "name": name,
+            "age": age,
+            "sex": PEOPLE_SEX.get(name, "male"),
+            "hasHealthCover": HEALTH_COVER.get(name, False),
+            "pensionMonthly": round(monthly, 2),
+            "salaryEstimate": round(inferred if trusted else 35_000.0, 2),
+            "salaryInferred": trusted,
+            "salaryNote": (
+                f"inferred from EUR {monthly:,.0f} a month of pension contributions at "
+                f"an assumed {SCHEME_CONTRIBUTION_RATE * 100:.0f}% scheme rate"
+                if trusted else
+                "not inferable - too few months of contributions logged, so this is a "
+                "placeholder to be corrected on screen"),
+        })
+
+    return {
+        "people": people,
+        "schemeContributionRatePct": SCHEME_CONTRIBUTION_RATE * 100,
+        "mortgage": {
+            "amount": 300_000.0,
+            "year": int((goal or {}).get("targetDate", "2027")[:4]) if goal else 2027,
+            "note": ("Purchase price is a placeholder until you set one; the deposit "
+                     "goal's own target date is what dates the requirement."),
+        },
+        "constants": {
+            "lcrFreeUntilAge": protection.LCR_FREE_UNTIL_AGE,
+            "lcrLoadingPerYearPct": protection.LCR_LOADING_PER_YEAR * 100,
+            "lcrMaxLoadingPct": protection.LCR_MAX_LOADING * 100,
+            "lcrYearsApplied": protection.LCR_YEARS_APPLIED,
+            "marginalRatePct": protection.MARGINAL_RATE * 100,
+            "ipReliefIncomeCapPct": protection.IP_RELIEF_INCOME_CAP * 100,
+            "retirementAge": protection.RETIREMENT_AGE,
+            "realEarningsGrowthPct": protection.REAL_EARNINGS_GROWTH * 100,
+            "realDiscountPct": protection.REAL_DISCOUNT_RATE * 100,
+            "mortality": protection.MORTALITY,
+            "disabilityMultiple": protection.DISABILITY_MULTIPLE,
+            "indicative": protection.INDICATIVE,
+        },
     }
 
 
@@ -394,6 +469,48 @@ def build(agent_dir: str, allocation: float = 0.10,
                 price_age_hours=price_age_hours,
                 trends=trends,
             )
+
+            # Options and CFDs. Asked for often enough that leaving them off
+            # does not stop anyone buying them, it only stops them seeing
+            # what the contract is worth before they do.
+            benchmark_daily = benchmark.dropna()
+            option_candidates = {}
+            for held in priced:
+                ticker = held.ticker
+                if ticker not in holding_returns.columns:
+                    continue
+                series = holding_returns[ticker].dropna()
+                paired = pd.concat([series, benchmark_daily], axis=1,
+                                   join="inner").dropna()
+                if len(paired) < 120:
+                    continue
+                own = paired.iloc[:, 0].to_numpy()
+                mkt = paired.iloc[:, 1].to_numpy()
+                variance = mkt.var(ddof=1)
+                beta = float(np.cov(own, mkt, ddof=1)[0, 1] / variance) if variance else 1.0
+                annual_vol = float(own.std(ddof=1)) * math.sqrt(optimise.TRADING_DAYS)
+                # Spot has to be the number on the ticket, and a US ticket
+                # is in dollars. Everything else on this site is EUR.
+                rate = eurusd if (held.currency == "USD" and eurusd) else 1.0
+                option_candidates[ticker] = {
+                    "spot": latest.get(ticker, 0.0) * rate,
+                    "vol": annual_vol,
+                    "beta": beta,
+                    "drift": optimise.RISK_FREE + max(-0.5, beta) * optimise.EQUITY_RISK_PREMIUM,
+                    "name": held.name,
+                    "currency": held.currency,
+                }
+            current_theory = book_views[name]["optimisation"]["theories"]["current"]
+            book_views[name]["derivatives"] = {
+                **derivatives.scan(option_candidates, view_value,
+                                   fx=eurusd or 1.0),
+                "cfd": derivatives.cfd(current_theory["expectedReturn"] / 100,
+                                       current_theory["vol"] / 100, view_value),
+                "venues": derivatives.VENUES,
+                "confidence": None,
+            }
+            book_views[name]["derivatives"]["confidence"] = derivatives.confidence(
+                book_views[name]["derivatives"]["best"])
         except ValueError as exc:
             print(f"  {name}: optimisation skipped ({exc})")
             book_views[name]["optimisation"] = None
@@ -473,6 +590,7 @@ def build(agent_dir: str, allocation: float = 0.10,
         "corrections": corrections,
         "brokers": {n: {"fractional": b.fractional, "note": b.note}
                     for n, b in brokers.BROKERS.items()},
+        "protection": _protection_block(pension_pots, goal),
         "historyYears": history_years,
         "taxMode": TAX_MODE,
         "taxHorizon": TAX_HORIZON,

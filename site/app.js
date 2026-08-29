@@ -1024,7 +1024,7 @@ const TABS = [
   ["advice", "Advice"], ["compare", "Against the funds"], ["map", "Map & exposure"],
   ["simulate", "Simulate"], ["stress", "Stress"], ["cube", "Risk surfaces"],
   ["explore", "Explore"], ["goal", "Mortgage"], ["pension", "Pension"],
-  ["escape", "Escape velocity"],
+  ["protection", "Protection"], ["escape", "Escape velocity"],
 ];
 
 function renderTabs() {
@@ -1053,6 +1053,7 @@ function selectTab(id) {
   if (id === "cube") renderCube();
   if (id === "explore") renderExplore();
   if (id === "escape") { wireEscape(); renderEscape(); }
+  if (id === "protection") renderProtection();
   if (id === "simulate") {
     const { tickers, weights, value } = currentWeights();
     const start = document.getElementById("mcStart");
@@ -1087,6 +1088,8 @@ function renderDerived() {
   renderStress(mine);
   renderDiscrepancies();
   renderOrders();
+  renderDerivativesAdvice();
+  renderCfdAdvice();
   renderAudit();
   renderDeadlines();
   renderLevers();
@@ -1129,6 +1132,7 @@ function selectBook(name) {
   if (on("pension")) renderPension();
   if (on("cube")) renderCube();
   if (on("escape")) renderEscape();
+  if (on("protection")) renderProtection();
 }
 
 function renderCaveats() {

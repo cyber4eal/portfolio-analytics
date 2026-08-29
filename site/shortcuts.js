@@ -375,3 +375,203 @@ function renderShortcuts(mu, sigma, start) {
   renderDecay(mu, sigma);
   renderShortcutVerdicts();
 }
+
+/* ---------------- the concrete recommendation, on the advice page ---------------- */
+
+const fmtMoney = (v, ccy) =>
+  ccy === "USD" ? "$" + Number(v).toLocaleString("en-IE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : "€" + Number(v).toLocaleString("en-IE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const expiryMonth = months => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  // Listed options expire the third Friday, so the month is the useful part
+  // and pretending to a date would be false precision.
+  return d.toLocaleDateString("en-IE", { month: "long", year: "numeric" });
+};
+
+/* The full ticket for one contract, written the way it would be typed. */
+function contractCard(row, heading, tone) {
+  const card = el("div", { class: "ticket" + (tone ? " " + tone : "") });
+  card.append(el("div", { class: "tickethead" }, heading));
+  card.append(el("div", { class: "ticketline" },
+    el("strong", {}, `BUY ${row.contracts > 0 ? row.contracts + " × " : ""}${row.ticker} ` +
+      `${expiryMonth(row.months)} ${fmtMoney(row.strike, row.currency)} CALL`)));
+
+  const grid = el("div", { class: "ticketgrid" });
+  for (const [k, v] of [
+    ["Underlying", `${row.name} at ${fmtMoney(row.spot, row.currency)}`],
+    ["Strike", `${fmtMoney(row.strike, row.currency)} — ${row.strikeMultiple}% of spot`],
+    ["Expiry", `${expiryMonth(row.months)} (${row.months} months out)`],
+    ["Premium, modelled", `${fmtMoney(row.premium, row.currency)} a share · ` +
+      `${fmtEur(row.perContractEur)} a contract`],
+    ["Breakeven at expiry", `${fmtMoney(row.breakeven, row.currency)} — needs ` +
+      `${row.moveNeededPct >= 0 ? "+" : ""}${row.moveNeededPct}%`],
+    ["Expires worthless", `${row.pWorthless}% of the time`],
+    ["Makes money", `${row.pProfit}% of the time`],
+    ["Expected return", `${row.expectedReturnPct >= 0 ? "+" : ""}${row.expectedReturnPct}%`],
+    ["Exposure per contract", `${row.leverage}× the premium in stock`],
+    ["Disciplined size", `${row.quarterKellyPct}% of the book — ${fmtEur(row.budgetEur)}`],
+  ]) {
+    grid.append(el("div", { class: "tg" }, el("span", { class: "k" }, k),
+      el("span", { class: "v" }, v)));
+  }
+  card.append(grid);
+  return card;
+}
+
+function renderDerivativesAdvice() {
+  const box = document.getElementById("derivBox");
+  if (!box) return;
+  const d = view().derivatives;
+  if (!d || !d.best) {
+    box.innerHTML = "";
+    box.append(el("p", { class: "muted" },
+      "No holding in this book has a listed options chain deep enough to price."));
+    document.getElementById("derivNote").textContent = "";
+    return;
+  }
+  box.innerHTML = "";
+
+  const { value } = currentWeights();
+  const best = d.best, cheap = d.cheapest;
+
+  /* The headline is not the contract. It is whether the smallest tradeable
+     unit is even compatible with a disciplined position on this book, and
+     on a EUR 14k book it is not - which is a specific, checkable answer
+     rather than a hedge. */
+  const verdict = el("div", { class: d.placeableCount ? "goodbox" : "warnbox",
+                              style: "margin-bottom:16px" });
+  verdict.innerHTML = d.placeableCount
+    ? `<strong>${d.placeableCount} of the ${d.assumptions.scanned} contracts scanned are placeable at a ` +
+      `disciplined size.</strong> The best of those is below.`
+    : `<strong>Buy nothing today — not because options are wrong, because the unit is.</strong> ` +
+      `A contract is 100 shares. The cheapest one on your book is ` +
+      `<strong>${cheap.ticker} ${expiryMonth(cheap.months)} ` +
+      `${fmtMoney(cheap.strike, cheap.currency)}</strong> at ${fmtEur(cheap.perContractEur)}, which is ` +
+      `<strong>${cheap.oneContractPctOfBook}% of everything you own</strong> in one expiring bet, against ` +
+      `the ${cheap.quarterKellyPct}% the arithmetic allows — about ` +
+      `${Math.round(cheap.perContractEur / Math.max(cheap.budgetEur, 1))}× too big. None of the ` +
+      `${d.assumptions.scanned} contracts scanned clears that test.<br><br>` +
+      `The pick below is what you would buy if the book were bigger. It becomes placeable at a book value ` +
+      `of about <strong>${fmtEur(d.bookValueNeededForBest)}</strong> — ` +
+      `${(d.bookValueNeededForBest / value).toFixed(0)}× where you are.`;
+  box.append(verdict);
+
+  box.append(contractCard(best, "Best contract on the screen", "ticket-best"));
+
+  /* Where it can be bought. This is the part people discover after they
+     have decided, and it is the part that stops the trade. */
+  const venue = d.venues.options;
+  const where = el("div", { class: "ticket ticket-venue" });
+  where.append(el("div", { class: "tickethead" }, "Where you would place it"));
+  where.append(el("div", { class: "ticketline" },
+    el("strong", {}, venue.recommended)));
+  where.append(el("p", { class: "muted", style: "font-size:13px;margin-top:6px" }, venue.why));
+  const nope = el("ul", { style: "margin:10px 0 0 18px;font-size:13px" });
+  for (const [broker, why] of Object.entries(venue.not_available)) {
+    nope.append(el("li", {}, el("strong", {}, broker + ": "),
+      el("span", { class: "muted" }, why)));
+  }
+  where.append(nope);
+  where.append(el("p", { class: "muted", style: "font-size:13px;margin-top:8px" }, venue.alternative));
+  box.append(where);
+
+  box.append(el("h4", { style: "margin:20px 0 8px;font-size:14px" }, "The eight best contracts"));
+  box.append(table(
+    ["Underlying", "Expiry", "Strike", "Premium", "Per contract", "Worthless",
+     "Makes money", "Expected", "Growth at size"],
+    d.shortlist.map(r => ({
+      cls: r === d.best ? "me" : "",
+      cells: [
+        { node: el("strong", {}, r.ticker) },
+        r.months + "m",
+        `${r.strikeMultiple}%`,
+        fmtMoney(r.premium, r.currency),
+        fmtEur(r.perContractEur),
+        { text: r.pWorthless + "%", cls: "neg" },
+        { text: r.pProfit + "%", cls: "pos" },
+        { text: (r.expectedReturnPct >= 0 ? "+" : "") + r.expectedReturnPct + "%",
+          cls: r.expectedReturnPct > 0 ? "pos" : "neg" },
+        { text: r.growthAtKellyPct + "%", cls: "muted" },
+      ],
+    })), { numFrom: 3 }));
+
+  if (d.excluded.length) {
+    box.append(el("h4", { style: "margin:20px 0 8px;font-size:14px" },
+      "Holdings with no chain worth trading"));
+    box.append(table(["Holding", "Why it is not on the list"],
+      d.excluded.map(e => ({ cells: [{ node: el("strong", {}, e.ticker) },
+                                      { text: e.why, cls: "muted" }] })), {}));
+  }
+
+  const conf = confidenceDetail(d.confidence);
+  if (conf) { conf.style.marginTop = "18px"; box.append(conf); }
+
+  document.getElementById("derivNote").innerHTML =
+    `<strong>Read the ranking before the numbers.</strong> Contracts are ordered by what each adds to ` +
+    `compound growth at its own Kelly size, not by expected return. Ranked the other way, the winner is ` +
+    `always the furthest out-of-the-money call on the most volatile name, every time, because a lottery ` +
+    `ticket has the highest expected return and the smallest correct position. That the growth ranking ` +
+    `puts a <strong>deep in-the-money two-year call</strong> at the top is the model working: what it has ` +
+    `found is leveraged stock with a defined floor, which is the only option structure that survives being ` +
+    `sized properly.<br><br>` +
+    `<strong>Three things the premium above is not.</strong> It is Black-Scholes at each line's realised ` +
+    `volatility plus ${d.assumptions.volRiskPremiumPoints} points, because implied trades above realised ` +
+    `and that spread is the seller's income — pricing at realised would invent an edge that belongs to ` +
+    `the other side. It is a mid, not an offer. And it has no commission in it: about USD 0.65 a contract ` +
+    `at Interactive Brokers, which on one contract is trivial and on a rolled position is not.<br><br>` +
+    `<strong>If you buy one, the rules that matter more than the strike.</strong> Buy time, not cheapness: ` +
+    `time value decays with roughly the square root of what is left, so the final sixty days burn about a ` +
+    `quarter of the premium and weeklies are nearly pure decay. Never roll a loser — that converts a ` +
+    `capped loss into an uncapped habit. Write the money off the day you place it, because a ` +
+    `${best.pWorthless}% chance of zero is the modal outcome, not the bad case.<br><br>` +
+    `And keep the honest frame from Escape velocity: <strong>none of this reaches the target.</strong> ` +
+    `Convexity is the right shape for a large goal and the wrong size to matter on ${fmtEur(value)}.`;
+}
+
+function renderCfdAdvice() {
+  const box = document.getElementById("cfdBox");
+  if (!box) return;
+  const d = view().derivatives;
+  if (!d || !d.cfd) return;
+  const c = d.cfd;
+  box.innerHTML = "";
+
+  box.append(table(
+    ["Leverage", "Gross expected", "Variance drag", "Financing", "Compound growth",
+     "Wiped out by a move of"],
+    c.rows.map(r => ({
+      cells: [
+        { node: el("strong", {}, r.leverage + "×") },
+        fmtPct1(r.grossPct),
+        { text: "−" + fmtPct1(r.dragPct), cls: "muted" },
+        { text: "−" + fmtPct1(r.financingPct), cls: "muted" },
+        { text: fmtPct1(r.growthPct), cls: r.growthPct > 0 ? "pos" : "neg" },
+        { text: "−" + fmtPct1(r.wipeoutMovePct), cls: "neg" },
+      ],
+    })), { numFrom: 1 }));
+
+  const worst = c.rows[c.rows.length - 1];
+  document.getElementById("cfdNote").innerHTML =
+    `<strong>Every row is negative, and none of them needs bad luck to get there.</strong> Your book runs ` +
+    `at ${c.bookVol}% volatility against a ${c.bookDrift}% expected return, and a CFD multiplies the ` +
+    `return in proportion while multiplying the drag by the square. At 2× the compound growth is ` +
+    `${fmtPct1(c.rows[0].growthPct)} against ${fmtPct1(c.rows[0].unlevered)} unlevered; at ` +
+    `${worst.leverage}× — the maximum ESMA allows a retail equity CFD — it is ` +
+    `${fmtPct1(worst.growthPct)}.<br><br>` +
+    `<strong>Then the financing.</strong> About ${fmtPct1(c.financingPct)} a year on the borrowed part, ` +
+    `charged daily, whether the position is right or not. That is the row labelled financing and it is the ` +
+    `only cost here you can see going out.<br><br>` +
+    `<strong>Then the path.</strong> A ${worst.leverage}× position is wiped out by a ` +
+    `${worst.wipeoutMovePct}% move against it, and on a ${c.bookVol}% book that is an ordinary quarter, ` +
+    `not a crash. The broker closes it on the path; it does not wait to see whether you were right by the ` +
+    `horizon.<br><br>` +
+    `<strong>The venue, since you asked.</strong> ${c.venue.recommended} is the only one of your three ` +
+    `that offers CFDs at all — ${c.venue.why} And their own published number is the cleanest summary of ` +
+    `the product anyone has written: <strong>${c.venue.warning}</strong><br><br>` +
+    `<strong>Recommendation: no, and this is the highest-confidence refusal on the site.</strong> Not a ` +
+    `judgement about risk appetite — the expected growth is negative before the first tick, and no view on ` +
+    `direction fixes an instrument that charges you to hold it and squares your volatility. If you want ` +
+    `leverage with a floor under it, the panel above is the version that has one.`;
+}
