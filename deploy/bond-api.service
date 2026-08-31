@@ -16,16 +16,21 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/portfolio-analytics
+# A rebuild started from the site has to land where nginx serves,
+# not in the checkout - otherwise it reports success and the page
+# stays stale, which is worse than failing.
+Environment=BOND_SITE_DIR=/var/www/fundlab
 Environment=AGENT_DIR=/root/portfolio-agent
 ExecStart=/usr/bin/python3 /opt/portfolio-analytics/server/api.py --port 8001 --host 127.0.0.1
 Restart=on-failure
 RestartSec=5
 
-# It writes only its own data directory and the Google Sheet.
+# It writes its own data directory, the Google Sheet, and - when a
+# rebuild is started from the site - the served payload.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/opt/portfolio-analytics/data
+ReadWritePaths=/opt/portfolio-analytics/data /var/www/fundlab
 
 [Install]
 WantedBy=multi-user.target

@@ -64,6 +64,35 @@ curl -s localhost:8001/api/health
 the sheet. `false` means the ledger still records everything and the mirror
 is off — which is the safe failure, not a broken one.
 
+### What the VPS needs before the refresh button works
+
+The API can start without any of this — recording trades only needs the
+standard library — but a rebuild is the full analytics stack, and without it
+the button posts, waits, and returns the tail of a traceback.
+
+```bash
+pip3 install "numpy>=1.24" "pandas>=2.0" "yfinance>=0.2.40" "requests>=2.32" "google-api-python-client>=2.130" "google-auth>=2.30" "python-dotenv>=1.0"
+```
+
+`/api/health` reports what this box can actually do:
+
+| Field | Means |
+| --- | --- |
+| `rebuildMode: "live sheet"` | reads the Holdings sheet — the real thing |
+| `rebuildMode: "last synced holdings"` | no Google credentials, so it reprices `data/holdings.csv` |
+| `canRebuild: false` | `rebuildBlockers` says what is missing, in a sentence |
+
+Two environment variables in `bond-api.service` make the difference, and
+both are already in the unit file:
+
+* `AGENT_DIR` — the portfolio-agent checkout, for the sheet and its service
+  account. The CLI reads it too, so `refresh` works on either machine
+  without anyone passing `--agent-dir`.
+* `BOND_SITE_DIR=/var/www/fundlab` — where a rebuild writes. The served
+  directory is not inside the checkout, so without this a rebuild on the VPS
+  wrote a file nginx never reads and reported success while the page stayed
+  days old.
+
 ## Every rebuild, from this Mac (see the ordering note in deploy.sh)
 
 ```bash

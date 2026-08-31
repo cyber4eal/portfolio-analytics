@@ -1206,9 +1206,27 @@ async function boot() {
   // A rebuild is what makes the theories, the plan and the trend signals
   // move; the button only appears when there is an API able to run one.
   const refresh = document.getElementById("refreshNow");
-  checkApi().then(() => {
+  checkApi().then(health => {
     if (!API) return;
+    // Only offer it where it can actually run. The button used to appear
+    // whenever the API answered at all, so on a box with no numpy it posted,
+    // waited, and came back with the tail of a traceback.
+    if (health && health.canRebuild === false) {
+      refresh.style.display = "";
+      refresh.disabled = true;
+      refresh.textContent = "rebuild unavailable";
+      refresh.title = (health.rebuildBlockers || []).join("; ")
+        || "this machine cannot rebuild";
+      return;
+    }
     refresh.style.display = "";
+    if (health && health.rebuildMode === "last synced holdings") {
+      // Honest label: it reprices, it does not re-read the sheet, so a
+      // holding added since the last full build will not appear.
+      refresh.title = "reprices the holdings as of the last full build — "
+        + "this machine cannot read the live sheet";
+      refresh.textContent = "refresh prices";
+    }
     refresh.addEventListener("click", async () => {
       refresh.disabled = true;
       refresh.textContent = "rebuilding…";
@@ -1219,8 +1237,12 @@ async function boot() {
           await new Promise(r => setTimeout(r, 3000));
           const state = await apiGet("/api/rebuild");
           if (!state.running) {
-            if (state.status && state.status.startsWith("failed")) {
+            if (state.status && (state.status.startsWith("failed")
+                                 || state.status.startsWith("cannot rebuild"))) {
+              // Show the reason, not just that it went wrong.
               refresh.textContent = "rebuild failed";
+              refresh.title = state.status;
+              alert("Rebuild failed:\n\n" + state.status);
               return;
             }
             location.reload();

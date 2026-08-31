@@ -221,3 +221,45 @@ def test_a_holding_with_no_statement_is_left_entirely_alone():
     holdings = [Holding("RIVN", "RIVN", "Rivian", 33, 457.71, "USD", True, "Catalin")]
     out, fixes = apply_ledger(holdings, {}, None)
     assert fixes == [] and out[0].shares == 33 and out[0].value_eur == 457.71
+
+
+def test_the_payload_can_be_written_somewhere_other_than_the_checkout(tmp_path, monkeypatch):
+    """The VPS serves /var/www/fundlab, which is not inside the checkout. A
+    rebuild started from the site used to write into the checkout instead,
+    report success, and leave the served page days old."""
+    import importlib
+
+    monkeypatch.setenv("BOND_SITE_DIR", str(tmp_path / "served"))
+    from fundengine import publish
+    reloaded = importlib.reload(publish)
+    try:
+        assert reloaded.SITE_DIR == tmp_path / "served"
+        written = reloaded.write({"asOf": "2026-08-31"})
+        assert written == tmp_path / "served" / "data.json"
+        assert written.exists()
+    finally:
+        monkeypatch.delenv("BOND_SITE_DIR", raising=False)
+        importlib.reload(publish)
+
+
+def test_the_api_says_why_it_cannot_rebuild_instead_of_shelling_out():
+    """The failure this replaces showed the tail of a Python traceback -
+    "No module named 'numpy'" - to someone who pressed a refresh button."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / "server"))
+    try:
+        import api
+    finally:
+        sys.path.pop(0)
+
+    capability = api.rebuild_capability()
+    assert set(capability) >= {"canRebuild", "rebuildMode", "rebuildBlockers",
+                               "sheetReadable", "csvFallback"}
+    # Every blocker has to read as a sentence, not a stack frame.
+    for blocker in capability["rebuildBlockers"]:
+        assert blocker and "Traceback" not in blocker
+    if not capability["canRebuild"]:
+        assert capability["rebuildBlockers"], "a refusal has to say why"

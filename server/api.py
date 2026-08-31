@@ -17,6 +17,7 @@ recomputed from anything else.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -44,6 +45,66 @@ _rebuild_state = {"running": False, "queuedAt": 0.0, "lastFinished": 0.0,
                   "lastResult": None}
 
 
+def rebuild_capability() -> dict:
+    """What this machine can actually rebuild, and what is stopping it.
+
+    Worth its own function because the failure mode it replaces was awful:
+    the button posted, the API shelled out to a command that could never
+    work on this box, and what came back was the tail of a Python traceback
+    - "No module named 'numpy'" - shown to someone who wanted fresher
+    prices. A capability that is checked before it is offered turns that
+    into a sentence.
+
+    Two rebuild modes, in preference order. A LIVE rebuild reads the
+    holdings sheet and is the real thing. A CSV rebuild reprices the last
+    synced holdings and needs no Google credentials at all, which keeps the
+    charts current on a box that has none - at the cost of not seeing a
+    holding added in the sheet since the last full build.
+    """
+    blockers, missing = [], []
+    for module in ("numpy", "pandas", "yfinance"):
+        if importlib.util.find_spec(module) is None:
+            missing.append(module)
+    if missing:
+        blockers.append("missing Python packages: " + ", ".join(missing)
+                        + " (pip3 install " + " ".join(missing) + ")")
+
+    sheet_ready, sheet_why = False, ""
+    if not AGENT_DIR:
+        sheet_why = "AGENT_DIR is not set"
+    elif not Path(AGENT_DIR).is_dir():
+        sheet_why = f"no checkout at {AGENT_DIR}"
+    elif not (Path(AGENT_DIR) / ".env").exists():
+        sheet_why = f"no .env in {AGENT_DIR}"
+    else:
+        for module in ("dotenv", "google.oauth2", "googleapiclient"):
+            if importlib.util.find_spec(module.split(".")[0]) is None:
+                sheet_why = f"missing {module}"
+                break
+        else:
+            sheet_ready = True
+
+    csv_path = REPO / "data" / "holdings.csv"
+    csv_ready = csv_path.exists()
+
+    if missing:
+        mode = None
+    elif sheet_ready:
+        mode = "live sheet"
+    elif csv_ready:
+        mode = "last synced holdings"
+        blockers.append(f"cannot read the live sheet ({sheet_why}), so a rebuild "
+                        f"reprices the holdings as of the last full build")
+    else:
+        mode = None
+        blockers.append(f"cannot read the live sheet ({sheet_why}) and there is no "
+                        f"{csv_path.name} to fall back on")
+
+    return {"canRebuild": mode is not None, "rebuildMode": mode,
+            "rebuildBlockers": blockers, "sheetReadable": sheet_ready,
+            "csvFallback": csv_ready}
+
+
 def _run_rebuild() -> None:
     """Rebuild the payload in the background.
 
@@ -55,10 +116,22 @@ def _run_rebuild() -> None:
     """
     import subprocess
 
+    capability = rebuild_capability()
+    if not capability["canRebuild"]:
+        # Say what is wrong in a sentence, rather than shelling out to a
+        # command whose traceback will say it less clearly.
+        _rebuild_state["lastResult"] = "cannot rebuild here: " + \
+            "; ".join(capability["rebuildBlockers"])
+        _rebuild_state["running"] = False
+        _rebuild_state["lastFinished"] = time.time()
+        return
+
+    command = [sys.executable, "-m", "fundengine", "refresh", "--quiet"]
+    if not capability["sheetReadable"]:
+        command += ["--from-csv", str(REPO / "data" / "holdings.csv")]
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "fundengine", "refresh", "--quiet"],
-            cwd=str(REPO), capture_output=True, text=True, timeout=600)
+            command, cwd=str(REPO), capture_output=True, text=True, timeout=600)
         _rebuild_state["lastResult"] = (
             "ok" if result.returncode == 0
             else f"failed: {(result.stderr or '').strip()[-300:]}")
@@ -216,7 +289,11 @@ class Handler(SimpleHTTPRequestHandler):
                     "ok": True,
                     "rebuild": _rebuild_state["lastResult"],
                     "rebuilding": _rebuild_state["running"],
-                    "sheetWrites": bool(AGENT_DIR),
+                    # Checked, not assumed. This said true on a box where
+                    # AGENT_DIR pointed at nothing, which is the one claim
+                    # on this endpoint that must not be optimistic.
+                    "sheetWrites": rebuild_capability()["sheetReadable"],
+                    **rebuild_capability(),
                     "ledger": str(ledger.LEDGER),
                     "trades": len(ledger.read_all()),
                 })

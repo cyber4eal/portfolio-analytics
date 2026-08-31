@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from . import importers, ledger, pension, publish
 
-DEFAULT_AGENT_DIR = (
+#: The VPS keeps the agent checkout somewhere else entirely, and the service
+#: unit already says where in AGENT_DIR. Reading it means `refresh` works on
+#: both machines without anyone remembering to pass --agent-dir - which is
+#: exactly what the rebuild button was failing on.
+_AGENT_DIR_ENV = os.environ.get("AGENT_DIR", "").strip()
+
+FALLBACK_AGENT_DIR = (
     "/Users/catalin_main/Library/Application Support/Claude/"
     "local-agent-mode-sessions/b6bac09d-05f2-42ba-bfcf-deef8d796d7d/"
     "aea9c31f-2d00-462a-a14b-1a723c07a247/"
     "local_143c8db9-8af1-4880-98e5-77b3e0d4f58a/outputs/portfolio-agent"
 )
+DEFAULT_AGENT_DIR = _AGENT_DIR_ENV or FALLBACK_AGENT_DIR
 
 
 def main(argv: list[str] | None = None) -> int:

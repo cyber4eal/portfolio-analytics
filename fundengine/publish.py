@@ -24,7 +24,11 @@ import pandas as pd
 
 from . import actions, advice, brokers, combo, derivatives, goals, markets, protection, irish_tax, ledger, levers, optimise, pension, portfolio as book, prices, profile, scenarios, universe
 
-SITE_DIR = Path(__file__).resolve().parent.parent / "site"
+#: Where the payload lands. On the VPS the served directory is not inside
+#: the checkout, so a rebuild there wrote a file nginx never reads and
+#: reported success while the page stayed days old. BOND_SITE_DIR is set
+#: in the systemd unit to point at what is actually served.
+SITE_DIR = Path(os.environ.get("BOND_SITE_DIR") or Path(__file__).resolve().parent.parent / "site")
 
 
 def _series_payload(returns: pd.DataFrame) -> dict:
